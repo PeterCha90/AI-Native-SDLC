@@ -1,0 +1,11 @@
+{
+  "ticketSource": "linear",
+  "repoPath": "../..",
+  "port": 3939,
+  "e2eDriver": "ego-lite",
+  "demoAppUrl": "http://localhost:5173",
+  "useWorktree": true,
+  "linearTeamId": "REPLACE_WITH_LINEAR_TEAM_ID",
+  "autoTicketLabel": "sdlc-auto",
+  "maxAutoTicketDepth": 3
+}

@@ -1,0 +1,12 @@
+{
+  "name": "ai-native-sdlc",
+  "version": "0.1.0",
+  "description": "AI-native SDLC 6단계(Plan/Design/Build/Test/Deploy/Maintain)와 3층 가드레일(CLAUDE.md/skills/hooks)을 자기 저장소에 그대로 적용하는 플러그인. 티켓에서 intent.md를 뽑아 spec.md, plan.md, 구현, PR 리뷰, e2e 검증까지 이어간다.",
+  "author": {
+    "name": "Peter Cha",
+    "url": "https://github.com/PeterCha90"
+  },
+  "homepage": "https://claude.com/blog/the-ai-native-sdlc-playbook",
+  "license": "MIT",
+  "keywords": ["sdlc", "ai-native", "hooks", "code-review", "e2e", "guardrails"]
+}
