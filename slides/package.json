@@ -8,6 +8,7 @@
   "dependencies": {
     "@remotion/cli": "4.0.520",
     "@remotion/google-fonts": "4.0.520",
+    "@remotion/player": "4.0.520",
     "@remotion/tailwind-v4": "4.0.520",
     "@remotion/transitions": "4.0.520",
     "react": "19.2.3",
@@ -18,16 +19,20 @@
   "devDependencies": {
     "@remotion/eslint-config-flat": "4.0.520",
     "@types/react": "19.2.7",
+    "@types/react-dom": "^19.2.7",
     "@types/web": "0.0.166",
     "eslint": "9.19.0",
     "prettier": "3.8.1",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "vite": "^8.2.2"
   },
   "scripts": {
     "dev": "remotion studio",
     "build": "remotion bundle",
     "upgrade": "remotion upgrade",
-    "lint": "eslint src && tsc"
+    "lint": "eslint src && tsc",
+    "present": "vite",
+    "present:build": "vite build"
   },
   "sideEffects": [
     "*.css"

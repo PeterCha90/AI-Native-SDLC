@@ -23,26 +23,33 @@ import { S16Deploy2 } from "./slides/S16Deploy2";
 import { S17Maintain } from "./slides/S17Maintain";
 import { S18Close } from "./slides/S18Close";
 
-/** 슬라이드 순서와 길이. Root.tsx 가 개별 컴포지션 등록에도 같은 배열을 쓴다. */
+/**
+ * 슬라이드 순서와 길이. Root.tsx 가 개별 컴포지션 등록에도 같은 배열을 쓴다.
+ *
+ * `beats` 는 발표 모드에서 재생이 멈추는 지점(초)이다. 화살표를 한 번 누르면
+ * 다음 beat 까지 재생하고 선다. 애니메이션이 한 덩어리 끝나 화면이 안정된 시점을
+ * 골라 둔 값이라, 말하는 호흡에 맞춰 여기서 자유롭게 조정하면 된다.
+ * 마지막 beat 에서 한 번 더 누르면 다음 장으로 넘어간다.
+ */
 export const SLIDES = [
-  { id: "S01Title", component: S01Title, frames: 270 },
-  { id: "S02Bottleneck", component: S02Bottleneck, frames: 270 },
-  { id: "S03WhereBottleneck", component: S03WhereBottleneck, frames: 270 },
-  { id: "S04Loop", component: S04Loop, frames: 270 },
-  { id: "S05Stages", component: S05Stages, frames: 270 },
-  { id: "S06Table", component: S06Table, frames: 270 },
-  { id: "S07Artifacts", component: S07Artifacts, frames: 270 },
-  { id: "S08Plan", component: S08Plan, frames: 270 },
-  { id: "S09Design", component: S09Design, frames: 270 },
-  { id: "S10Build1", component: S10Build1, frames: 270 },
-  { id: "S11Build2", component: S11Build2, frames: 270 },
-  { id: "S12Build3", component: S12Build3, frames: 270 },
-  { id: "S13Test1", component: S13Test1, frames: 270 },
-  { id: "S14Test2", component: S14Test2, frames: 270 },
-  { id: "S15Deploy1", component: S15Deploy1, frames: 270 },
-  { id: "S16Deploy2", component: S16Deploy2, frames: 270 },
-  { id: "S17Maintain", component: S17Maintain, frames: 270 },
-  { id: "S18Close", component: S18Close, frames: 360 },
+  { id: "S01Title", component: S01Title, frames: 270, beats: [1.2, 2.6, 3.5] },
+  { id: "S02Bottleneck", component: S02Bottleneck, frames: 270, beats: [1.9, 4.7, 5.9] },
+  { id: "S03WhereBottleneck", component: S03WhereBottleneck, frames: 270, beats: [1.0, 3.2, 4.4, 4.9, 5.7] },
+  { id: "S04Loop", component: S04Loop, frames: 270, beats: [2.0, 5.2, 6.4] },
+  { id: "S05Stages", component: S05Stages, frames: 270, beats: [2.4, 3.6] },
+  { id: "S06Table", component: S06Table, frames: 270, beats: [1.4, 2.0, 2.6, 3.2, 3.8, 4.5] },
+  { id: "S07Artifacts", component: S07Artifacts, frames: 270, beats: [2.8, 4.1, 6.9] },
+  { id: "S08Plan", component: S08Plan, frames: 270, beats: [1.5, 2.4, 3.8, 4.9] },
+  { id: "S09Design", component: S09Design, frames: 270, beats: [1.5, 2.4, 3.8, 4.9] },
+  { id: "S10Build1", component: S10Build1, frames: 270, beats: [1.5, 2.4, 3.8, 4.9] },
+  { id: "S11Build2", component: S11Build2, frames: 270, beats: [1.3, 2.1, 2.9, 4.2, 5.0] },
+  { id: "S12Build3", component: S12Build3, frames: 270, beats: [1.5, 2.4, 4.4] },
+  { id: "S13Test1", component: S13Test1, frames: 270, beats: [1.5, 2.4, 4.5, 7.0] },
+  { id: "S14Test2", component: S14Test2, frames: 270, beats: [1.3, 2.1, 2.9, 3.6, 7.1] },
+  { id: "S15Deploy1", component: S15Deploy1, frames: 270, beats: [1.5, 2.4, 3.3, 5.0] },
+  { id: "S16Deploy2", component: S16Deploy2, frames: 270, beats: [1.3, 2.3, 3.3, 4.6, 5.5] },
+  { id: "S17Maintain", component: S17Maintain, frames: 270, beats: [1.5, 2.4, 6.3, 7.6, 8.4] },
+  { id: "S18Close", component: S18Close, frames: 360, beats: [2.5, 5.0, 6.1, 9.0, 9.8, 10.4] },
 ] as const;
 
 const TRANSITION_FRAMES = 12;

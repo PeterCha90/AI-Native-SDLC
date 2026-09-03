@@ -15,18 +15,49 @@
 
 ## 1. 발표자료
 
-### 미리보기
+### 발표하기 (이걸 쓰면 된다)
 
 ```bash
 cd slides
-npm install          # 최초 1회
-npx remotion studio  # 브라우저에서 열림
+npm install       # 최초 1회
+npm run present   # 브라우저가 자동으로 열린다 (localhost:5273)
+```
+
+화살표로 넘기면서 말하는 발표 모드다. 영상을 틀어놓는 게 아니라, **의미 단위로 끊어서** 재생이 선다.
+
+| 키 | 동작 |
+| --- | --- |
+| `→` `Space` `↓` `PageDown` | 다음 단계. 다음 beat 까지 재생하고 멈춘다 |
+| `←` `↑` `PageUp` | 이전 단계. 되감지 않고 그 지점으로 바로 이동 |
+| `S` | 왼쪽 썸네일 목차 열기·닫기 (`Esc` 로도 닫힘) |
+| `F` | 전체화면 |
+| `R` | 방금 구간 다시 재생 |
+| `Home` `End` | 처음 / 마지막 장 |
+
+- 왼쪽 목차는 18장 썸네일이다. 클릭하면 그 장의 **내용이 다 나온 상태**로 이동한다. 경계를 드래그해 폭을 조절할 수 있다.
+- 오른쪽 아래에 `05 / 18 · 2/4` 처럼 현재 장과 그 장의 몇 번째 단계인지 나온다.
+- 아래 진행 막대는 장 단위가 아니라 beat 단위로 찬다. 남은 분량이 실제 말하는 호흡과 맞는다.
+
+**멈추는 지점을 바꾸려면** `slides/src/Deck.tsx` 의 `beats` 배열을 고치면 된다. 단위는 초다.
+
+```ts
+{ id: "S06Table", component: S06Table, frames: 270, beats: [1.4, 2.0, 2.6, 3.2, 3.8, 4.5] },
+```
+
+대조표처럼 한 줄씩 짚고 싶으면 beat 를 촘촘히, 한 번에 보여주고 설명할 거면 성글게 두면 된다.
+
+### 편집하며 보기
+
+```bash
+npx remotion studio  # Remotion Studio
 ```
 
 Studio 왼쪽 트리에서:
 
 - `Deck` — 18장 전체 이어붙인 것
 - `Slides/` 폴더 — 개별 슬라이드. 한 장씩 열어 편집하거나 스틸로 뽑을 수 있다
+
+발표 모드(`npm run present`)와 Studio 는 다른 서버다. 발표는 발표 모드로, 편집은 Studio 로 하면 된다.
 
 ### 영상으로 내보내기
 
@@ -54,8 +85,9 @@ npx remotion still S06Table out/table.png --frame=200
 
 - 색·글자 크기: `slides/src/theme.ts` 한 곳에서만 관리한다
 - 6단계 이름: `slides/src/components/Stage.tsx`의 `STAGES` 배열
-- 슬라이드 순서·길이: `slides/src/Deck.tsx`의 `SLIDES` 배열
+- 슬라이드 순서·길이·발표 beat: `slides/src/Deck.tsx`의 `SLIDES` 배열
 - 개별 슬라이드: `slides/src/slides/SNN*.tsx`
+- 발표 모드 자체: `slides/src/present/` (`Presenter.tsx` 조작, `Filmstrip.tsx` 목차)
 
 고친 뒤에는 반드시 확인할 것:
 
