@@ -43,7 +43,7 @@ const WorktreeDiagram: React.FC = () => {
             width: 4,
             backgroundColor: color.border,
             borderRadius: 2,
-            height: interpolate(frame, [0.3 * fps, 1.0 * fps], [0, TOP_PAD + ROW_GAP * (WORKTREES.length - 1) + 20], {
+            height: interpolate(frame, [0.3 * fps, 1.0 * fps], [0, TOP_PAD + ROW_GAP * (WORKTREES.length - 1) + 50], {
               extrapolateLeft: "clamp",
               extrapolateRight: "clamp",
               easing,
@@ -73,7 +73,7 @@ const WorktreeDiagram: React.FC = () => {
               />
               <div
                 style={{
-                  marginLeft: 16,
+                  marginLeft: 0,
                   display: "flex",
                   alignItems: "center",
                   gap: 16,

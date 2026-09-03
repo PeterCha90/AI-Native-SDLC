@@ -16,7 +16,7 @@ const ROWS: Row[] = [
 ];
 
 const ROW_STEP = 0.6;
-const COLS = "170px 1fr 1fr";
+const COLS = "220px 1fr 1fr";
 
 export const S06Table: React.FC = () => {
   return (
@@ -45,7 +45,7 @@ export const S06Table: React.FC = () => {
                   borderBottom: `1px solid ${color.border}`,
                 }}
               >
-                <div style={{ fontFamily: font.mono, fontSize: size.small, fontWeight: 700, color: color.text }}>
+                <div style={{ fontFamily: font.mono, fontSize: size.small, fontWeight: 700, color: color.text, whiteSpace: "nowrap" }}>
                   {s.no} {s.en}
                 </div>
                 <div style={{ fontSize: size.small, lineHeight: 1.4, color: color.cool }}>{row.before}</div>

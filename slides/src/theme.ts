@@ -26,8 +26,15 @@ export const color = {
 } as const;
 
 export const font = {
-  sans: '"Noto Sans KR", -apple-system, BlinkMacSystemFont, sans-serif',
-  mono: '"Roboto Mono", ui-monospace, SFMono-Regular, Menlo, monospace',
+  /** 본문 기본. */
+  sans: 'Pretendard, -apple-system, BlinkMacSystemFont, sans-serif',
+  /** 제목 전용. 눈누기초고딕. */
+  title: 'BasicGothic, Pretendard, -apple-system, sans-serif',
+  /**
+   * 코드·라벨용. 폰트 대체는 글리프 단위로 일어나므로 한글은 Pretendard 로 떨어진다.
+   * 등폭 폰트에 한글 글리프가 없으면 자간이 벌어져 "수  시간" 처럼 보인다.
+   */
+  mono: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Pretendard, monospace',
 } as const;
 
 /** 1920x1080 기준 타이포 스케일. */

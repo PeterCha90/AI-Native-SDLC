@@ -27,7 +27,7 @@ export const S03WhereBottleneck: React.FC = () => {
               <div
                 key={stage.en}
                 style={{
-                  flex: isBuild ? "0 0 170px" : "1 1 0",
+                  flex: "1 1 0",
                   display: "flex",
                   flexDirection: "column",
                   alignItems: "center",
@@ -40,16 +40,16 @@ export const S03WhereBottleneck: React.FC = () => {
                       backgroundColor: isBuild ? color.surfaceHi : color.surface,
                       border: `2px solid ${isBuild ? color.accent : color.coolDim}`,
                       borderRadius: 14,
-                      padding: isBuild ? "12px 14px" : "20px 22px",
+                      padding: "20px 22px",
                       display: "flex",
                       flexDirection: "column",
-                      gap: isBuild ? 4 : 8,
+                      gap: 8,
                     }}
                   >
                     <div
                       style={{
                         fontFamily: font.mono,
-                        fontSize: isBuild ? 18 : size.small,
+                        fontSize: size.small,
                         fontWeight: 800,
                         letterSpacing: 1,
                         color: isBuild ? color.accent : color.cool,
@@ -57,13 +57,13 @@ export const S03WhereBottleneck: React.FC = () => {
                     >
                       {stage.en}
                     </div>
-                    <div style={{ fontSize: isBuild ? 14 : size.tiny, color: color.textFaint }}>{stage.ko}</div>
+                    <div style={{ fontSize: size.tiny, color: color.textFaint }}>{stage.ko}</div>
                   </div>
                 </Reveal>
 
                 <div
                   style={{
-                    width: isBuild ? 34 : 64,
+                    width: 64,
                     height: 220,
                     position: "relative",
                     backgroundColor: color.surface,
@@ -92,7 +92,7 @@ export const S03WhereBottleneck: React.FC = () => {
                 <Reveal at={gaugeAt + 0.5} dur={0.4} rise={10} name={`Note-${stage.en}`}>
                   <div
                     style={{
-                      fontFamily: font.mono,
+                      fontFamily: font.sans,
                       fontSize: size.tiny,
                       color: isBuild ? color.accent : color.textFaint,
                     }}

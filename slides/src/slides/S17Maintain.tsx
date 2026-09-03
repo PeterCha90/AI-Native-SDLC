@@ -26,7 +26,7 @@ const yAt = (sigma: number) => BASELINE_Y - sigma * SIGMA_PX;
 const SIGMA_RULES = [
   { tag: "1σ", tone: color.textDim, rule: "기록만 한다" },
   { tag: "2σ", tone: color.warn, rule: "Claude 가 읽기 전용으로 진단한다" },
-  { tag: "3σ", tone: color.danger, rule: "리뷰 게이트로 들어가는 PR 또는 사전 승인된 런북으로만 행동한다" },
+  { tag: "3σ", tone: color.danger, rule: "PR 또는 사전 승인된 런북으로만 행동한다" },
 ];
 
 /** 시계열 + 30일 기준선 + 1/2/3σ 밴드. 라인이 그려지다가 3σ를 넘으면 경보가 뜬다. */
@@ -73,12 +73,42 @@ const SigmaBandChart: React.FC = () => {
 
   return (
     <svg viewBox={`0 0 ${CHART_W} ${CHART_H}`} style={{ width: "100%", height: "100%", display: "block" }}>
-      {/* 3σ 밴드 (가장 바깥, 먼저 그려서 아래에 깔린다) */}
-      <rect x={0} y={yAt(3)} width={CHART_W} height={SIGMA_PX * 6} fill={color.danger} opacity={0.12} />
+      {/* 3σ 밴드 (가장 바깥, 먼저 그려서 아래에 깔린다). 옅은 채우기 + 경계선으로 지표선과 분리한다. */}
+      <rect
+        x={0}
+        y={yAt(3)}
+        width={CHART_W}
+        height={SIGMA_PX * 6}
+        fill={color.danger}
+        opacity={0.07}
+        stroke={color.danger}
+        strokeOpacity={0.4}
+        strokeWidth={1}
+      />
       {/* 2σ 밴드 */}
-      <rect x={0} y={yAt(2)} width={CHART_W} height={SIGMA_PX * 4} fill={color.warn} opacity={0.16} />
+      <rect
+        x={0}
+        y={yAt(2)}
+        width={CHART_W}
+        height={SIGMA_PX * 4}
+        fill={color.warn}
+        opacity={0.08}
+        stroke={color.warn}
+        strokeOpacity={0.4}
+        strokeWidth={1}
+      />
       {/* 1σ 밴드 (가장 안쪽, 위에 덮는다) */}
-      <rect x={0} y={yAt(1)} width={CHART_W} height={SIGMA_PX * 2} fill={color.textDim} opacity={0.2} />
+      <rect
+        x={0}
+        y={yAt(1)}
+        width={CHART_W}
+        height={SIGMA_PX * 2}
+        fill={color.textDim}
+        opacity={0.1}
+        stroke={color.textDim}
+        strokeOpacity={0.35}
+        strokeWidth={1}
+      />
 
       <line
         x1={0}
@@ -178,34 +208,40 @@ export const S17Maintain: React.FC = () => {
                   backgroundColor: color.surface,
                   border: `2px solid ${color.border}`,
                   borderRadius: 20,
-                  padding: "32px 36px 28px",
+                  padding: "28px 36px 22px",
                   display: "flex",
                   flexDirection: "column",
-                  gap: 18,
+                  gap: 14,
+                  // ponytail: 자식 SVG의 퍼센트 높이가 flex 자동 최소 높이 계산을 흔들어
+                  // legend가 패널 밖으로 밀리는 걸 막는다. 넘치면 잘라내는 안전망.
+                  overflow: "hidden",
                 }}
               >
                 <div style={{ fontFamily: font.mono, fontSize: size.tiny, letterSpacing: 2, color: color.textFaint }}>
                   지표 · 30일 롤링 기준선 + σ 밴드
                 </div>
-                <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                {/* flex:1 대신 고정 높이. SVG의 퍼센트 높이가 flex 최소 높이 계산에 끼어들어
+                    legend 공간을 밀어내는 걸 막는다 — 남은 공간을 legend에 확실히 남긴다. */}
+                <div style={{ flex: "0 0 200px", display: "flex", alignItems: "center", justifyContent: "center" }}>
                   <SigmaBandChart />
                 </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                   {SIGMA_RULES.map((r) => (
                     <div key={r.tag} style={{ display: "flex", gap: 14, alignItems: "baseline" }}>
                       <span
                         style={{
                           fontFamily: font.mono,
-                          fontSize: size.small,
+                          fontSize: size.tiny,
                           fontWeight: 700,
                           color: r.tone,
-                          width: 34,
+                          width: 30,
                           flexShrink: 0,
+                          lineHeight: 1.3,
                         }}
                       >
                         {r.tag}
                       </span>
-                      <span style={{ fontSize: size.small, color: color.textDim, lineHeight: 1.4 }}>{r.rule}</span>
+                      <span style={{ fontSize: size.tiny, color: color.textDim, lineHeight: 1.3 }}>{r.rule}</span>
                     </div>
                   ))}
                 </div>

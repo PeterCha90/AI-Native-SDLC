@@ -19,6 +19,19 @@ import { Filmstrip, STRIP_W } from "./Filmstrip";
 const beatFrame = (slideIndex: number, beatIndex: number) =>
   Math.round(SLIDES[slideIndex].beats[beatIndex] * FPS);
 
+/**
+ * Player 는 마운트된 채로 두고 내부 컴포넌트만 갈아끼운다.
+ * 장마다 리마운트하면 두 가지가 깨진다.
+ *   - 전환 순간 빈 프레임이 한 번 지나가 화면이 깜빡인다
+ *   - frameupdate 리스너가 사라진 Player 에 남아 정지가 걸리지 않고 끝까지 재생된다
+ * 길이는 가장 긴 장에 맞춰 고정한다. 어차피 beat 밖으로는 나가지 않는다.
+ */
+const DURATION = Math.max(...SLIDES.map((s) => s.frames));
+
+type PresentSlideProps = { slide: React.ComponentType };
+
+const PresentSlide: React.FC<PresentSlideProps> = ({ slide: Component }) => <Component />;
+
 export const Presenter: React.FC = () => {
   const [index, setIndex] = useState(0);
   const [beat, setBeat] = useState(0);
@@ -57,6 +70,8 @@ export const Presenter: React.FC = () => {
     }
     target.current = frame;
     if (p.getCurrentFrame() >= frame) {
+      // 이미 지난 지점이면 재생하지 않는다. 그냥 그 자리에 세운다.
+      p.pause();
       p.seekTo(frame);
       return;
     }
@@ -189,13 +204,11 @@ export const Presenter: React.FC = () => {
 
       <Player
         ref={player}
-        // key 로 장을 바꾼다. Player 내부 프레임 상태가 이전 장 값을 물고 오지 않는다.
-        key={slide.id}
-        component={slide.component}
-        inputProps={{}}
-        // 리마운트 직후 첫 프레임부터 목표 위치를 그린다. 장 전환에 번쩍임이 없다.
-        initialFrame={beatFrame(index, beat)}
-        durationInFrames={slide.frames}
+        // key 를 주지 않는다. 컴포넌트만 교체해 전환 깜빡임과 리스너 유실을 막는다.
+        component={PresentSlide}
+        inputProps={{ slide: slide.component }}
+        initialFrame={beatFrame(0, 0)}
+        durationInFrames={DURATION}
         fps={FPS}
         compositionWidth={WIDTH}
         compositionHeight={HEIGHT}

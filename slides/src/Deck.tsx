@@ -35,7 +35,7 @@ export const SLIDES = [
   { id: "S01Title", component: S01Title, frames: 270, beats: [1.2, 2.6, 3.5] },
   { id: "S02Bottleneck", component: S02Bottleneck, frames: 270, beats: [1.9, 4.7, 5.9] },
   { id: "S03WhereBottleneck", component: S03WhereBottleneck, frames: 270, beats: [1.0, 3.2, 4.4, 4.9, 5.7] },
-  { id: "S04Loop", component: S04Loop, frames: 270, beats: [2.0, 5.2, 6.4] },
+  { id: "S04Loop", component: S04Loop, frames: 270, beats: [3.6, 5.0, 6.1] },
   { id: "S05Stages", component: S05Stages, frames: 270, beats: [2.4, 3.6] },
   { id: "S06Table", component: S06Table, frames: 270, beats: [1.4, 2.0, 2.6, 3.2, 3.8, 4.5] },
   { id: "S07Artifacts", component: S07Artifacts, frames: 270, beats: [2.8, 4.1, 6.9] },

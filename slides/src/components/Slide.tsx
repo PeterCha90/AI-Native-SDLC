@@ -29,6 +29,10 @@ export const Slide: React.FC<Props> = ({ eyebrow, title, index, children }) => {
         padding: `${SAFE.y}px ${SAFE.x}px`,
         display: "flex",
         flexDirection: "column",
+        // 한글은 기본 규칙이 음절 단위로 끊어서 "…한 / 다" 같은 고아 글자가 생긴다.
+        // 어절 단위로 끊게 해서 슬라이드 전체의 개행을 정상화한다.
+        wordBreak: "keep-all",
+        overflowWrap: "break-word",
       }}
     >
       {/* 상단 얇은 강조선. 프레임에 무게를 준다. */}
@@ -72,10 +76,11 @@ export const Slide: React.FC<Props> = ({ eyebrow, title, index, children }) => {
         <Interactive.Div
           name="Title"
           style={{
+            fontFamily: font.title,
             fontSize: size.headline,
-            fontWeight: 800,
-            lineHeight: 1.14,
-            letterSpacing: -1.5,
+            fontWeight: 400,
+            lineHeight: 1.18,
+            letterSpacing: -1,
             marginBottom: 44,
             opacity: interpolate(frame, [4, 0.9 * fps], [0, 1], {
               extrapolateLeft: "clamp",

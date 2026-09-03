@@ -51,7 +51,7 @@ export const S10Build1: React.FC = () => {
         </div>
 
         <div style={{ flex: 0.85, display: "flex", flexDirection: "column", gap: 22 }}>
-          <CodeBlock filename="docs/plan/ENG-1042.md" code={PLAN_MD} at={2.9} fontSize={20} />
+          <CodeBlock filename="docs/plan/ENG-1042.md" code={PLAN_MD} at={2.9} fontSize={17} />
           <Reveal at={4.0}>
             <div style={{ fontSize: size.small, color: color.textFaint, lineHeight: 1.5 }}>
               원래 intent 와 spec 을 못 본 다른 엔지니어도 구현할 수 있을 만큼 상세해야 한다.

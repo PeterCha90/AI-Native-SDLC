@@ -49,10 +49,10 @@ const StackLayer: React.FC<{ layer: Layer; at: number }> = ({ layer, at }) => {
           backgroundColor: color.surface,
           border: `2px solid ${layer.toneDim}`,
           borderRadius: 18,
-          padding: "20px 40px",
+          padding: "15px 40px",
           display: "flex",
           flexDirection: "column",
-          gap: 10,
+          gap: 8,
         }}
       >
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -103,7 +103,7 @@ const StackLayer: React.FC<{ layer: Layer; at: number }> = ({ layer, at }) => {
 export const S11Build2: React.FC = () => {
   return (
     <Slide eyebrow="03 BUILD · 구현" title="가드레일은 세 층으로 쌓는다" index={11}>
-      <div style={{ display: "flex", flexDirection: "column", gap: 14, flex: 1, minHeight: 0 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 11, flex: 1, minHeight: 0 }}>
         {LAYERS.map((layer, i) => (
           <StackLayer key={layer.key} layer={layer} at={0.6 + i * 0.75} />
         ))}

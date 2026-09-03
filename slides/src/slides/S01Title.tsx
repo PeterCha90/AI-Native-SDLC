@@ -15,6 +15,8 @@ export const S01Title: React.FC = () => {
         color: color.text,
         padding: `${SAFE.y}px ${SAFE.x}px`,
         justifyContent: "center",
+        wordBreak: "keep-all",
+        overflowWrap: "break-word",
       }}
     >
       {/* 배경에서 천천히 번지는 광원. 타이틀에만 쓴다. */}
@@ -54,10 +56,11 @@ export const S01Title: React.FC = () => {
       <Interactive.Div
         name="Hero"
         style={{
+          fontFamily: font.title,
           fontSize: size.hero,
-          fontWeight: 900,
-          lineHeight: 1.1,
-          letterSpacing: -4,
+          fontWeight: 400,
+          lineHeight: 1.16,
+          letterSpacing: -2,
           maxWidth: 1500,
           opacity: interpolate(frame, [0.5 * fps, 1.5 * fps], [0, 1], {
             extrapolateLeft: "clamp",

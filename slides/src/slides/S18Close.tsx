@@ -123,12 +123,15 @@ const NODES: GraphNode[] = [
 ];
 const NODE_W = 150;
 const NODE_H = 54;
-const EDGES: [string, string][] = [
-  ["claude", "hooks"],
-  ["claude", "subagents"],
-  ["plan", "subagents"],
-  ["hooks", "gates"],
-  ["intent", "gates"],
+type Edge = { from: string; to: string; curveVia?: { x: number; y: number } };
+const EDGES: Edge[] = [
+  { from: "claude", to: "hooks" },
+  { from: "claude", to: "subagents" },
+  { from: "plan", to: "subagents" },
+  { from: "hooks", to: "gates" },
+  // intent→gates는 subagents를 건너뛰는 간선이라 직선이면 subagents 노드/다른 간선과 겹친다.
+  // subagents 아래로 크게 우회하는 곡선으로 그려 교차를 없앤다.
+  { from: "intent", to: "gates", curveVia: { x: 470, y: 380 } },
 ];
 const byId = (id: string) => NODES.find((n) => n.id === id)!;
 
@@ -140,6 +143,19 @@ const edgeGeom = (fromId: string, toId: string) => {
   const ux = Math.cos(angle);
   const uy = Math.sin(angle);
   return { startX: a.x + ux * 80, startY: a.y + uy * 80, endX: b.x - ux * 94, endY: b.y - uy * 94, angle };
+};
+
+/** 곡선 간선의 시작/끝점을 노드 중심에서 접선 방향으로 당긴 좌표 + 끝점 접선 각도(화살촉용). */
+const curveGeom = (fromId: string, toId: string, via: { x: number; y: number }) => {
+  const a = byId(fromId);
+  const b = byId(toId);
+  const startAngle = Math.atan2(via.y - a.y, via.x - a.x);
+  const endAngle = Math.atan2(b.y - via.y, b.x - via.x);
+  return {
+    start: { x: a.x + Math.cos(startAngle) * 80, y: a.y + Math.sin(startAngle) * 80 },
+    end: { x: b.x - Math.cos(endAngle) * 94, y: b.y - Math.sin(endAngle) * 94 },
+    endAngle,
+  };
 };
 
 const AdoptionGraph: React.FC = () => {
@@ -157,8 +173,7 @@ const AdoptionGraph: React.FC = () => {
 
   return (
     <svg viewBox="0 0 660 440" style={{ width: "100%", height: "100%", display: "block" }}>
-      {EDGES.map(([from, to], i) => {
-        const g = edgeGeom(from, to);
+      {EDGES.map(({ from, to, curveVia }, i) => {
         const edgeStart = START + i * STAGGER;
         const drawT = interpolate(frame, [edgeStart, edgeStart + DUR], [0, 1], {
           extrapolateLeft: "clamp",
@@ -169,6 +184,26 @@ const AdoptionGraph: React.FC = () => {
           extrapolateLeft: "clamp",
           extrapolateRight: "clamp",
         });
+
+        if (curveVia) {
+          const { start, end, endAngle } = curveGeom(from, to, curveVia);
+          return (
+            <g key={`${from}-${to}`}>
+              <path
+                d={`M ${start.x} ${start.y} Q ${curveVia.x} ${curveVia.y} ${end.x} ${end.y}`}
+                fill="none"
+                stroke={color.textDim}
+                strokeWidth={2}
+                pathLength={1}
+                strokeDasharray={1}
+                strokeDashoffset={1 - drawT}
+              />
+              <polygon points={arrowHead(end, endAngle)} fill={color.textDim} opacity={arrowOpacity} />
+            </g>
+          );
+        }
+
+        const g = edgeGeom(from, to);
         return (
           <g key={`${from}-${to}`}>
             <line

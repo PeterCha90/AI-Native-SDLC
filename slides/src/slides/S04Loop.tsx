@@ -4,12 +4,13 @@ import { Reveal } from "../components/Reveal";
 import { STAGES, StageBadge } from "../components/Stage";
 import { color, font, size } from "../theme";
 
+const EASE = Easing.bezier(0.16, 1, 0.3, 1);
+
 /** 다이어그램 캔버스 크기. 콘텐츠 영역 안에 고정폭으로 그려서 SVG 좌표를 픽셀에 맞춘다. */
 const CW = 1560;
 const CH = 626;
-const NODE_W = 172;
+const NODE_W = 200;
 const NODE_H = 134;
-const MARGIN_X = NODE_W / 2 + 20;
 const CENTER_X = CW / 2;
 const CENTER_Y = CH / 2;
 // 세로는 제목과 캡션에 막혀 더 못 키운다. 대신 가로로 늘린 타원 궤도로 빈 좌우 공간을 쓴다.
@@ -30,13 +31,7 @@ const pointOffRect = (cx: number, cy: number, dx: number, dy: number) => {
   return { x: cx + (dx / len) * edgeDist, y: cy + (dy / len) * edgeDist };
 };
 
-/** 전통적 SDLC: 왼쪽→오른쪽 일직선. */
-const LINEAR_POS = STAGES.map((_, i) => ({
-  x: MARGIN_X + (i * (CW - 2 * MARGIN_X)) / (STAGES.length - 1),
-  y: CENTER_Y,
-}));
-
-/** AI-native: 닫힌 원형 궤도. Plan이 정상(12시), 시계방향으로 배치. */
+/** 닫힌 원형 궤도. Plan이 정상(12시), 시계방향으로 배치. 처음부터 이 자리에 고정이고, 하나씩 나타날 뿐이다. */
 const CIRCULAR_POS = STAGES.map((_, i) => {
   const angle = -Math.PI / 2 + i * ((2 * Math.PI) / STAGES.length);
   return {
@@ -45,10 +40,36 @@ const CIRCULAR_POS = STAGES.map((_, i) => {
   };
 });
 
-const TRANSITION_START_S = 2.5;
-const TRANSITION_END_S = 5;
-const CLOSE_START_S = 4.2;
-const CLOSE_END_S = 5.15;
+/** 순차 연결 화살표의 시작/끝점(카드 테두리 밖). 위치가 고정이라 한 번만 계산해두면 된다. */
+const ARROW_SEGMENTS = STAGES.slice(0, -1).map((_, i) => {
+  const a = CIRCULAR_POS[i];
+  const b = CIRCULAR_POS[i + 1];
+  return {
+    start: pointOffRect(a.x, a.y, b.x - a.x, b.y - a.y),
+    end: pointOffRect(b.x, b.y, a.x - b.x, a.y - b.y),
+  };
+});
+
+/** 노드 → 화살표 → 다음 노드 순으로 하나씩 등장하는 타임라인(초). */
+const NODE_APPEAR_DUR = 0.35;
+const ARROW_APPEAR_DUR = 0.3;
+const NODE_START_S: number[] = [];
+const ARROW_START_S: number[] = [];
+{
+  let t = 0;
+  for (let i = 0; i < STAGES.length; i++) {
+    NODE_START_S.push(t);
+    t += NODE_APPEAR_DUR;
+    if (i < STAGES.length - 1) {
+      ARROW_START_S.push(t);
+      t += ARROW_APPEAR_DUR;
+    }
+  }
+}
+/** 6개 노드가 모두 나타난 시점. 이후 잠깐 쉬었다가 회귀 곡선이 시작된다. */
+const CHAIN_END_S = NODE_START_S[NODE_START_S.length - 1] + NODE_APPEAR_DUR;
+const CLOSE_START_S = CHAIN_END_S + 0.4;
+const CLOSE_END_S = CLOSE_START_S + 1.0;
 
 /** Maintain(06) → Plan(01) 회귀 곡선의 제어점. 두 노드 사이 바깥쪽으로 크게 밀어내 루프 밖으로 뚜렷하게 튀어나오게 한다. */
 const RETURN_BULGE = 170;
@@ -98,51 +119,32 @@ export const S04Loop: React.FC = () => {
               </marker>
             </defs>
 
-            {/* 순차 연결 화살표. 위치가 선형→원형으로 보간되며 자연스럽게 루프 모양으로 휜다.
-                노드 카드 밑에 화살촉이 숨지 않도록 카드 테두리 바로 바깥까지만 선을 그린다. */}
+            {/* 순차 연결 화살표. 앞 노드가 나타난 직후 opacity 페이드로만 등장(위치는 고정). */}
             {STAGES.slice(0, -1).map((s, i) => {
-              const x1c = interpolate(frame, [TRANSITION_START_S * fps, TRANSITION_END_S * fps], [LINEAR_POS[i].x, CIRCULAR_POS[i].x], {
-                extrapolateLeft: "clamp",
-                extrapolateRight: "clamp",
-                easing: Easing.bezier(0.16, 1, 0.3, 1),
-              });
-              const y1c = interpolate(frame, [TRANSITION_START_S * fps, TRANSITION_END_S * fps], [LINEAR_POS[i].y, CIRCULAR_POS[i].y], {
-                extrapolateLeft: "clamp",
-                extrapolateRight: "clamp",
-                easing: Easing.bezier(0.16, 1, 0.3, 1),
-              });
-              const x2c = interpolate(frame, [TRANSITION_START_S * fps, TRANSITION_END_S * fps], [LINEAR_POS[i + 1].x, CIRCULAR_POS[i + 1].x], {
-                extrapolateLeft: "clamp",
-                extrapolateRight: "clamp",
-                easing: Easing.bezier(0.16, 1, 0.3, 1),
-              });
-              const y2c = interpolate(frame, [TRANSITION_START_S * fps, TRANSITION_END_S * fps], [LINEAR_POS[i + 1].y, CIRCULAR_POS[i + 1].y], {
-                extrapolateLeft: "clamp",
-                extrapolateRight: "clamp",
-                easing: Easing.bezier(0.16, 1, 0.3, 1),
-              });
-              const start = pointOffRect(x1c, y1c, x2c - x1c, y2c - y1c);
-              const end = pointOffRect(x2c, y2c, x1c - x2c, y1c - y2c);
+              const seg = ARROW_SEGMENTS[i];
+              const start = ARROW_START_S[i] * fps;
               return (
                 <line
                   key={`arrow-${s.en}`}
-                  x1={start.x}
-                  y1={start.y}
-                  x2={end.x}
-                  y2={end.y}
+                  x1={seg.start.x}
+                  y1={seg.start.y}
+                  x2={seg.end.x}
+                  y2={seg.end.y}
                   stroke={color.textDim}
                   strokeWidth={3}
                   markerEnd="url(#loopArrowFwd)"
-                  opacity={interpolate(frame, [(i + 1) * 0.08 * fps, (i + 1) * 0.08 * fps + 0.5 * fps], [0, 1], {
+                  opacity={interpolate(frame, [start, start + ARROW_APPEAR_DUR * fps], [0, 1], {
                     extrapolateLeft: "clamp",
                     extrapolateRight: "clamp",
-                    easing: Easing.bezier(0.16, 1, 0.3, 1),
+                    easing: EASE,
                   })}
                 />
               );
             })}
 
-            {/* Maintain → Plan: 루프를 닫는 회귀 화살표. 다른 화살표보다 굵고 크게, color.accent로 구분. */}
+            {/* Maintain → Plan: 루프를 닫는 회귀 화살표. 6개 노드가 모두 나타난 뒤에만 그려진다.
+                markerEnd(화살촉)은 strokeDasharray의 영향을 받지 않고 항상 그려지므로,
+                곡선이 그려지기 시작하기 전에는 opacity로 화살촉까지 함께 감춘다. */}
             <path
               d={`M ${RETURN_START.x} ${RETURN_START.y} Q ${RETURN_CTRL_X} ${RETURN_CTRL_Y} ${RETURN_END.x} ${RETURN_END.y}`}
               fill="none"
@@ -154,7 +156,11 @@ export const S04Loop: React.FC = () => {
               strokeDashoffset={interpolate(frame, [CLOSE_START_S * fps, CLOSE_END_S * fps], [1, 0], {
                 extrapolateLeft: "clamp",
                 extrapolateRight: "clamp",
-                easing: Easing.bezier(0.16, 1, 0.3, 1),
+                easing: EASE,
+              })}
+              opacity={interpolate(frame, [CLOSE_START_S * fps - 1, CLOSE_START_S * fps], [0, 1], {
+                extrapolateLeft: "clamp",
+                extrapolateRight: "clamp",
               })}
             />
           </svg>
@@ -175,40 +181,41 @@ export const S04Loop: React.FC = () => {
               opacity: interpolate(frame, [(CLOSE_START_S + 0.3) * fps, (CLOSE_START_S + 0.9) * fps], [0, 1], {
                 extrapolateLeft: "clamp",
                 extrapolateRight: "clamp",
-                easing: Easing.bezier(0.16, 1, 0.3, 1),
+                easing: EASE,
               }),
             }}
           >
             incident → intent.md
           </Interactive.Div>
 
-          {STAGES.map((s, i) => (
-            <Interactive.Div
-              key={s.en}
-              name={`LoopNode-${s.en}`}
-              style={{
-                position: "absolute",
-                left: interpolate(frame, [TRANSITION_START_S * fps, TRANSITION_END_S * fps], [LINEAR_POS[i].x - NODE_W / 2, CIRCULAR_POS[i].x - NODE_W / 2], {
-                  extrapolateLeft: "clamp",
-                  extrapolateRight: "clamp",
-                  easing: Easing.bezier(0.16, 1, 0.3, 1),
-                }),
-                top: interpolate(frame, [TRANSITION_START_S * fps, TRANSITION_END_S * fps], [LINEAR_POS[i].y - NODE_H / 2, CIRCULAR_POS[i].y - NODE_H / 2], {
-                  extrapolateLeft: "clamp",
-                  extrapolateRight: "clamp",
-                  easing: Easing.bezier(0.16, 1, 0.3, 1),
-                }),
-                width: NODE_W,
-                opacity: interpolate(frame, [i * 0.08 * fps, i * 0.08 * fps + 0.5 * fps], [0, 1], {
-                  extrapolateLeft: "clamp",
-                  extrapolateRight: "clamp",
-                  easing: Easing.bezier(0.16, 1, 0.3, 1),
-                }),
-              }}
-            >
-              <StageBadge no={s.no} en={s.en} ko={s.ko} compact />
-            </Interactive.Div>
-          ))}
+          {STAGES.map((s, i) => {
+            const start = NODE_START_S[i] * fps;
+            const end = start + NODE_APPEAR_DUR * fps;
+            return (
+              <Interactive.Div
+                key={s.en}
+                name={`LoopNode-${s.en}`}
+                style={{
+                  position: "absolute",
+                  left: CIRCULAR_POS[i].x - NODE_W / 2,
+                  top: CIRCULAR_POS[i].y - NODE_H / 2,
+                  width: NODE_W,
+                  opacity: interpolate(frame, [start, end], [0, 1], {
+                    extrapolateLeft: "clamp",
+                    extrapolateRight: "clamp",
+                    easing: EASE,
+                  }),
+                  translate: interpolate(frame, [start, end], ["0px 14px", "0px 0px"], {
+                    extrapolateLeft: "clamp",
+                    extrapolateRight: "clamp",
+                    easing: EASE,
+                  }),
+                }}
+              >
+                <StageBadge no={s.no} en={s.en} ko={s.ko} compact />
+              </Interactive.Div>
+            );
+          })}
         </div>
 
         <Reveal at={5.5} rise={14} name="LoopCaption">

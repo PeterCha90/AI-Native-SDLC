@@ -30,7 +30,15 @@ export const S05Stages: React.FC = () => {
         <div style={{ display: "flex", gap: 22 }}>
           {STAGES.map((s, i) => (
             <Reveal key={s.en} at={i * STEP + 0.15} rise={16} style={{ flex: 1 }} name={`StageSummary-${s.en}`}>
-              <div style={{ fontSize: size.small, color: color.textDim, lineHeight: 1.45, textAlign: "center" }}>
+              <div
+                style={{
+                  fontSize: size.small,
+                  color: color.textDim,
+                  lineHeight: 1.45,
+                  textAlign: "center",
+                  textWrap: "balance",
+                }}
+              >
                 {SUMMARY[s.en]}
               </div>
             </Reveal>
