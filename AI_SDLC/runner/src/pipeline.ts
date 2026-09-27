@@ -1,13 +1,19 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import type { Config } from "./config.ts";
 import type { Ticket, TicketSource } from "./adapters/types.ts";
 import { runStage, type StageResult } from "./claude.ts";
 import { runE2E } from "./e2e.ts";
+import { awaitApproval, gateMapPath, readGateMap, type GateMap, type StageId } from "./gate.ts";
+import type { LiveStatus, RunMeta } from "./dashboard.ts";
 
 const DEPTH_MARKER = /sdlc-depth:\s*(\d+)/i;
+
+/** Absolute path to the plugin that carries the skills, hooks and subagents each stage relies on. */
+const PLUGIN_DIR = resolve(fileURLToPath(new URL("../..", import.meta.url)), "plugin");
 
 /** Reads the `sdlc-depth: N` marker embedded in an auto-generated ticket's body. Absent = depth 0 (a human-created ticket). */
 export function extractDepth(ticket: Pick<Ticket, "body">): number {
@@ -23,6 +29,16 @@ export function extractDepth(ticket: Pick<Ticket, "body">): number {
 export function shouldCreateFollowupTicket(ticket: Ticket, autoTicketLabel: string, maxAutoTicketDepth: number): boolean {
   if (!ticket.labels.includes(autoTicketLabel)) return true;
   return extractDepth(ticket) < maxAutoTicketDepth;
+}
+
+/**
+ * Turns a detection script's `tier=N` line into a number.
+ * Returns null when the output has no tier line at all, so the caller can tell
+ * "the script said tier 0" apart from "the script never ran properly".
+ */
+export function parseTier(output: string): number | null {
+  const match = output.match(/\btier=(\d+)\b/);
+  return match ? Number(match[1]) : null;
 }
 
 interface StageLogEntry {
@@ -50,6 +66,32 @@ async function appendStateLog(runnerDir: string, key: string, entry: StageLogEnt
   await writeFile(statePath, JSON.stringify(log, null, 2));
 }
 
+/** Written once, at the start of a run — everything the dashboard needs that never changes again. */
+async function writeMeta(runnerDir: string, key: string, meta: RunMeta): Promise<void> {
+  await mkdir(join(runnerDir, ".state"), { recursive: true });
+  await writeFile(join(runnerDir, ".state", `${key}.meta.json`), JSON.stringify(meta, null, 2));
+}
+
+/**
+ * The single choke point for "what is this run doing right now". Every write replaces the whole
+ * file — this is a live snapshot for the dashboard to poll, not a log — so the dashboard never has
+ * to guess whether a stage is still running from a stale entry.
+ */
+async function writeLive(runnerDir: string, key: string, status: LiveStatus): Promise<void> {
+  await mkdir(join(runnerDir, ".state"), { recursive: true });
+  await writeFile(join(runnerDir, ".state", `${key}.live.json`), JSON.stringify(status, null, 2));
+}
+
+/**
+ * Best-effort: an auto-generated ticket's body always contains a link back to the ticket that
+ * caused it (see `runMaintain` below), so the dashboard can draw the "↺ back to 01" loop arrow.
+ * A human-authored ticket has no such link, and that's fine — it just means depth 0 has no parent.
+ */
+function extractParentUrl(body: string): string | undefined {
+  const match = body.match(/https?:\/\/\S+/);
+  return match ? match[0].replace(/[)\].,]+$/, "") : undefined;
+}
+
 async function runAndLog(
   runnerDir: string,
   key: string,
@@ -59,8 +101,9 @@ async function runAndLog(
   allowedTools?: string[],
 ): Promise<StageResult> {
   const startedAt = new Date().toISOString();
+  await writeLive(runnerDir, key, { stage, phase: "running", since: startedAt });
   console.log(`[pipeline:${key}] ${stage} starting`);
-  const result = await runStage({ prompt, cwd, allowedTools });
+  const result = await runStage({ prompt, cwd, allowedTools, pluginDir: PLUGIN_DIR });
   await appendStateLog(runnerDir, key, {
     stage,
     startedAt,
@@ -70,7 +113,7 @@ async function runAndLog(
     note: result.error,
   });
   console.log(
-    `[pipeline:${key}] ${stage} ${result.ok ? "ok" : "FAILED"}${result.sessionJsonlPath ? ` — zoe ${result.sessionJsonlPath} --follow` : ""}`,
+    `[pipeline:${key}] ${stage} ${result.ok ? "ok" : "FAILED"}${result.sessionJsonlPath ? ` (session: ${result.sessionJsonlPath})` : ""}`,
   );
   return result;
 }
@@ -96,66 +139,254 @@ async function detectTestCommand(repoDir: string): Promise<[string, string[]] | 
       // fall through to other detectors
     }
   }
+  if (existsSync(join(repoDir, "Makefile"))) return ["make", ["test"]];
   if (existsSync(join(repoDir, "pytest.ini")) || existsSync(join(repoDir, "pyproject.toml"))) {
     return ["pytest", ["-q"]];
   }
   return null;
 }
 
+/**
+ * 00-setup: build the approval pipeline inside Linear itself.
+ *
+ * Deliberately an agent step rather than a runner API call — this is the playbook's
+ * "write the outcome back through an MCP connector" in its most literal form, and it
+ * means the sub-issues, their role labels and their descriptions are authored in the
+ * same session log the dashboard links to.
+ */
+async function setupGates(
+  runnerDir: string,
+  key: string,
+  ticket: Ticket,
+  config: Config,
+  repoRoot: string,
+): Promise<GateMap> {
+  const outPath = gateMapPath(runnerDir, key);
+  await mkdir(join(runnerDir, ".state"), { recursive: true });
+
+  const stageLines = (Object.entries(config.gateRoles) as Array<[StageId, string]>)
+    .map(([stage, role]) => `  - "${stage}": 제목 "[gate] ${stage} — 승인자: ${role}"`)
+    .join("\n");
+
+  const prompt = [
+    `Linear MCP를 사용해 이슈 "${ticket.key}" (id: ${ticket.id}, ${ticket.url}) 아래에 승인 게이트용 하위 이슈 6개를 만들어라.`,
+    `부모 이슈와 같은 팀에 만든다.`,
+    ``,
+    `만들 하위 이슈:`,
+    stageLines,
+    ``,
+    `각 하위 이슈 본문에는 다음을 넣어라:`,
+    `  - 이 게이트가 무엇을 승인하는 것인지 한 줄`,
+    `  - "승인하려면 이 카드를 Done 으로 옮긴다. 반려하려면 Canceled 로 옮기고 사유를 코멘트로 남긴다."`,
+    `  - 원 티켓 링크 ${ticket.url}`,
+    ``,
+    `모두 만든 뒤, 정확히 아래 형식의 JSON을 ${outPath} 에 Write 해라. 다른 키를 추가하지 마라.`,
+    `{`,
+    `  "01-plan":     { "issueId": "<uuid>", "key": "<식별자>", "url": "<url>" },`,
+    `  "02-design":   { ... }, "03-build": { ... }, "04-test": { ... },`,
+    `  "05-deploy":   { ... }, "06-maintain": { ... }`,
+    `}`,
+    `issueId 는 Linear 내부 UUID 여야 한다 (식별자 ENG-12 가 아니라).`,
+  ].join("\n");
+
+  await runAndLog(runnerDir, key, "00-setup", prompt, repoRoot, ["Write", "mcp__linear__*"]);
+  // Throws with an explicit message if the agent didn't produce a usable map — the
+  // pipeline must not fall through into an ungated run.
+  return readGateMap(runnerDir, key);
+}
+
+/**
+ * Creates the branch worktree every stage runs in, and returns the directory that corresponds to
+ * `repoPath` inside it.
+ *
+ * `git worktree add` always checks out the whole repository, but `repoPath` may point at a
+ * subdirectory of it (the demo app is not a standalone repo), so the same relative offset is
+ * re-applied inside the worktree. Every git call is checked: an unchecked failure here would turn
+ * git's error text into a path and silently run the whole pipeline against the wrong directory.
+ */
+export async function prepareWorkDir(
+  repoRoot: string,
+  runnerDir: string,
+  key: string,
+  useWorktree: boolean,
+): Promise<{ workDir: string; branch: string | null }> {
+  if (!useWorktree) return { workDir: repoRoot, branch: null };
+
+  const top = await runCommand("git", ["rev-parse", "--show-toplevel"], repoRoot);
+  if (!top.ok) {
+    throw new Error(`git rev-parse --show-toplevel failed in ${repoRoot}: ${top.output.trim()}`);
+  }
+  const toplevel = top.output.trim();
+
+  const branch = `sdlc/${key}`;
+  const worktreeRoot = resolve(runnerDir, ".worktrees", key);
+  await mkdir(resolve(runnerDir, ".worktrees"), { recursive: true });
+  if (!existsSync(worktreeRoot)) {
+    const add = await runCommand("git", ["worktree", "add", "-b", branch, worktreeRoot], repoRoot);
+    if (!add.ok) {
+      throw new Error(`git worktree add -b ${branch} failed: ${add.output.trim()}`);
+    }
+  }
+
+  const offset = relative(toplevel, repoRoot);
+  const workDir = offset ? join(worktreeRoot, offset) : worktreeRoot;
+  if (!existsSync(workDir)) {
+    throw new Error(`worktree created but ${workDir} does not exist (offset "${offset}" from ${toplevel})`);
+  }
+  return { workDir, branch };
+}
+
+/**
+ * A note for the human at the gate when the stage that produced the artifact didn't actually
+ * succeed. Approving a document that was never written is worse than seeing no gate at all.
+ */
+function artifactWarning(result: StageResult, artifactPath: string): string {
+  if (!result.ok) {
+    const why = result.error ?? (result.timedOut ? "타임아웃" : `exit ${result.exitCode}`);
+    return `> ⚠️ 이 단계의 claude 세션이 실패했다 (${why}). 아래 산출물은 없거나 불완전할 수 있다.\n\n`;
+  }
+  if (!existsSync(artifactPath)) {
+    return `> ⚠️ 세션은 정상 종료했지만 \`${artifactPath}\` 가 생성되지 않았다.\n\n`;
+  }
+  return "";
+}
+
 export async function runPipeline(ticket: Ticket, config: Config, source: TicketSource, runnerDir: string): Promise<void> {
   const key = ticket.key || ticket.id;
   const repoRoot = config.repoPath;
-  const docsIntent = join(repoRoot, "docs", "intent", `${key}.md`);
-  const docsSpec = join(repoRoot, "docs", "spec", `${key}.md`);
-  const docsPlan = join(repoRoot, "docs", "plan", `${key}.md`);
-  await mkdir(join(repoRoot, "docs", "intent"), { recursive: true });
-  await mkdir(join(repoRoot, "docs", "spec"), { recursive: true });
-  await mkdir(join(repoRoot, "docs", "plan"), { recursive: true });
 
-  // 01 intent
-  await runAndLog(
+  // Written once, up front, so the dashboard can show a card for this run the moment it starts —
+  // it never has to wait for 00-setup to finish.
+  await writeMeta(runnerDir, key, {
+    key,
+    title: ticket.title,
+    url: ticket.url,
+    labels: ticket.labels,
+    depth: extractDepth(ticket),
+    parentUrl: extractParentUrl(ticket.body),
+    autoApprove: config.autoApprove,
+    startedAt: new Date().toISOString(),
+    gateRoles: config.gateRoles,
+  });
+
+  // The worktree is created up front, before stage 01, so that every stage — the documents as
+  // well as the code — runs in ONE checkout.
+  //
+  // This matters for correctness, not tidiness: the hooks resolve `docs/plan/*.md` relative to
+  // their own cwd, which is whatever cwd the stage's `claude -p` was spawned with. If the docs
+  // lived in repoRoot while the build stages ran in the worktree, plan-drift.sh and
+  // verify-before-done.sh would find no plan file and fail open — silently inert in the default
+  // useWorktree=true configuration. Keeping one working directory keeps them armed, and makes the
+  // PR carry the intent/spec/plan trio alongside the diff they justify.
+  const { workDir, branch } = await prepareWorkDir(repoRoot, runnerDir, key, config.useWorktree);
+
+  const docsIntent = join(workDir, "docs", "intent", `${key}.md`);
+  const docsSpec = join(workDir, "docs", "spec", `${key}.md`);
+  const docsPlan = join(workDir, "docs", "plan", `${key}.md`);
+  await mkdir(join(workDir, "docs", "intent"), { recursive: true });
+  await mkdir(join(workDir, "docs", "spec"), { recursive: true });
+  await mkdir(join(workDir, "docs", "plan"), { recursive: true });
+
+  const gates = config.autoApprove ? null : await setupGates(runnerDir, key, ticket, config, workDir);
+
+  /** Blocks on the human who owns this stage. Returns false if they rejected or the wait timed out. */
+  async function gate(stage: StageId, summary: string): Promise<boolean> {
+    if (!gates) {
+      console.log(`[gate:${stage}] SDLC_AUTO_APPROVE=1 — 게이트를 건너뛴다 (리허설 모드).`);
+      return true;
+    }
+    await writeLive(runnerDir, key, {
+      stage: `gate:${stage}`,
+      phase: "waiting",
+      role: config.gateRoles[stage],
+      gateUrl: gates[stage].url,
+      since: new Date().toISOString(),
+    });
+    const result = await awaitApproval({
+      source,
+      gate: gates[stage],
+      stage,
+      role: config.gateRoles[stage],
+      summary,
+      pollIntervalMs: config.gatePollIntervalMs,
+      timeoutMs: config.gateTimeoutMs,
+      autoApprove: false,
+    });
+    await appendStateLog(runnerDir, key, {
+      stage: `gate:${stage}`,
+      startedAt: new Date().toISOString(),
+      endedAt: new Date().toISOString(),
+      ok: result.approved,
+      sessionJsonlPath: null,
+      note: result.approved ? `${config.gateRoles[stage]} 승인` : `중단: ${result.reason}`,
+    });
+    return result.approved;
+  }
+
+  // ── 01 Plan ─────────────────────────────────────────────────────────────────
+  const intentResult = await runAndLog(
     runnerDir,
     key,
     "01-intent",
-    `Read the following ticket and write a clear, machine-actionable intent document to ${docsIntent}. ` +
-      `Ticket: ${ticket.title}\n\n${ticket.body}\n\nSource: ${ticket.url}`,
-    repoRoot,
-    ["Read", "Write"],
+    `sdlc-intent 스킬을 사용해 아래 티켓에서 ${docsIntent} 를 작성하라.\n\n` +
+      `티켓: ${ticket.title}\n\n${ticket.body}\n\n출처: ${ticket.url}`,
+    workDir,
+    ["Read", "Write", "Glob", "Grep", "Skill"],
   );
+  if (!(await gate("01-plan", `${artifactWarning(intentResult, docsIntent)}01 Plan 산출물: \`${docsIntent}\`\n\n문제/원하는 결과/영향 범위/제약/미해결 질문이 티켓 의도와 맞는지 확인해 달라.`))) {
+    await writeLive(runnerDir, key, { stage: "01-plan", phase: "aborted", since: new Date().toISOString() });
+    return;
+  }
 
-  // 02 spec
-  await runAndLog(
+  // ── 02 Design ───────────────────────────────────────────────────────────────
+  const specResult = await runAndLog(
     runnerDir,
     key,
     "02-spec",
-    `Read ${docsIntent} and write a technical spec to ${docsSpec}.`,
-    repoRoot,
-    ["Read", "Write"],
+    `sdlc-spec 스킬을 사용해 ${docsIntent} 를 읽고 ${docsSpec} 를 작성하라. 정책 충돌은 해당 설계 항목 바로 아래 인라인으로 표시하라.`,
+    workDir,
+    ["Read", "Write", "Glob", "Grep", "Skill"],
   );
-
-  // 03 build (optionally in a worktree)
-  let buildDir = repoRoot;
-  let branch: string | null = null;
-  if (config.useWorktree) {
-    branch = `sdlc/${key}`;
-    buildDir = resolve(runnerDir, ".worktrees", key);
-    await mkdir(resolve(runnerDir, ".worktrees"), { recursive: true });
-    if (!existsSync(buildDir)) {
-      await runCommand("git", ["worktree", "add", "-b", branch, buildDir], repoRoot);
-    }
+  if (!(await gate("02-design", `${artifactWarning(specResult, docsSpec)}02 Design 산출물: \`${docsSpec}\`\n\n"정책 충돌" 섹션을 각 정책 담당자와 정리한 뒤 진행 여부를 결정해 달라.`))) {
+    await writeLive(runnerDir, key, { stage: "02-design", phase: "aborted", since: new Date().toISOString() });
+    return;
   }
+
+  // ── 03 Build ────────────────────────────────────────────────────────────────
+  const planResult = await runAndLog(
+    runnerDir,
+    key,
+    "03-plan",
+    `sdlc-plan 스킬을 사용해 ${docsSpec} 를 읽고 ${docsPlan} 를 작성하라. "무엇이 깨질 수 있는가" 심문을 반드시 포함하라. 코드는 아직 수정하지 마라.`,
+    workDir,
+    ["Read", "Write", "Glob", "Grep", "Skill"],
+  );
+  if (!(await gate("03-build", `${artifactWarning(planResult, docsPlan)}03 Build 착수 계획: \`${docsPlan}\`\n\n변경할 파일 목록과 "무엇이 깨질 수 있는가"를 심문하고, 이대로 구현해도 되는지 판단해 달라.\n승인 후에만 에이전트가 코드를 편집한다.`))) {
+    await writeLive(runnerDir, key, { stage: "03-build", phase: "aborted", since: new Date().toISOString() });
+    return;
+  }
+
   await runAndLog(
     runnerDir,
     key,
     "03-build",
-    `Read ${docsSpec} (spec) and implement it. Write your plan to ${docsPlan} before editing code.`,
-    buildDir,
-    ["Read", "Write", "Edit", "Bash"],
+    `승인된 ${docsPlan} 의 작업 목록을 순서대로 구현하라. 계획에 없는 파일은 건드리지 마라 — ` +
+      `plan-drift 훅이 커밋 시점에 계획과 실제 변경을 대조한다. 저장소 CLAUDE.md 의 규칙을 따르라.`,
+    workDir,
   );
 
-  // 04 test
-  const testCmd = await detectTestCommand(buildDir);
-  const unitResult = testCmd ? await runCommand(testCmd[0], testCmd[1], buildDir) : { ok: true, output: "no test command detected, skipped" };
+  // ── 04 Test ─────────────────────────────────────────────────────────────────
+  await runAndLog(
+    runnerDir,
+    key,
+    "04-test-loop",
+    `sdlc-test 스킬을 사용해 ${docsPlan} 의 "성공 기준"을 실제로 실행하고, 통과할 때까지 피드백 루프를 돌려라. ` +
+      `이건 버그 수정 작업일 수 있으니 테스트를 고쳐서 통과시키지 마라. 마지막에 verifier 서브에이전트로 독립 검증을 받아라.`,
+    workDir,
+  );
+
+  const testCmd = await detectTestCommand(workDir);
+  const unitResult = testCmd ? await runCommand(testCmd[0], testCmd[1], workDir) : { ok: true, output: "no test command detected, skipped" };
   const e2eResult = await runE2E(config.e2eDriver, config.demoAppUrl).catch((err: Error) => ({ ok: false, output: err.message }));
   const testOk = unitResult.ok && e2eResult.ok;
   await appendStateLog(runnerDir, key, {
@@ -168,18 +399,46 @@ export async function runPipeline(ticket: Ticket, config: Config, source: Ticket
   });
   console.log(`[pipeline:${key}] 04-test ${testOk ? "ok" : "FAILED"}`);
 
-  // 05 deploy — PR only, no production gate
+  const testSummary =
+    `04 Test 결과\n\n- 단위/빌드: ${unitResult.ok ? "통과" : "실패"}\n- e2e: ${e2eResult.ok ? "통과" : "실패"}\n\n` +
+    "```\n" +
+    (unitResult.output + "\n" + e2eResult.output).slice(-1500) +
+    "\n```";
+  // A rejection here means "do not ship this", not "throw the run away": 06 Maintain still runs
+  // below, records why, and — if the detection tier warrants it — opens the follow-up ticket that
+  // closes the loop. Gates 01–03 are different: rejecting those means the work itself was wrong,
+  // so the pipeline returns and there is nothing to maintain.
+  const testApproved = await gate("04-test", `${testSummary}\n\n기계적 증거는 위에 붙였다. 의도와 리스크 관점에서 판단해 달라.`);
+
+  // ── 05 Deploy ───────────────────────────────────────────────────────────────
   let deployOk = false;
   let deployOutput = "";
-  if (testOk && branch) {
-    const pr = await runCommand("gh", ["pr", "create", "--fill", "--head", branch], buildDir);
-    deployOk = pr.ok;
-    deployOutput = pr.output;
-  } else if (testOk) {
-    deployOutput = "useWorktree=false: no dedicated branch, skipping PR creation";
-    deployOk = true;
+  let reviewNote = "";
+  if (testOk && testApproved) {
+    const reviewResult = await runAndLog(
+      runnerDir,
+      key,
+      "05-review",
+      `sdlc-review 스킬을 사용해 이 브랜치의 diff 를 Bugs/Security/Compliance 세 패스로 리뷰하라. ` +
+        `저장소 REVIEW.md 의 정책을 따르고, ${docsSpec} 의 요구사항 대비 준수 여부를 확인하라. 승인하지 마라 — 발견만 보고하라.`,
+      workDir,
+      ["Read", "Glob", "Grep", "Bash(git diff *)", "Bash(git log *)", "Bash(git status)", "Skill"],
+    );
+    // The release manager needs to know whether a review actually happened. An unreported failed
+    // review session looks identical to a clean one at the gate.
+    if (!reviewResult.ok) {
+      reviewNote = `> ⚠️ sdlc-review 세션이 실패했다 (${reviewResult.error ?? (reviewResult.timedOut ? "타임아웃" : `exit ${reviewResult.exitCode}`)}). Bugs/Security/Compliance 리뷰 결과가 없다.\n\n`;
+    }
+    if (branch) {
+      const pr = await runCommand("gh", ["pr", "create", "--fill", "--head", branch], workDir);
+      deployOk = pr.ok;
+      deployOutput = pr.output;
+    } else {
+      deployOutput = "useWorktree=false: no dedicated branch, skipping PR creation";
+      deployOk = true;
+    }
   } else {
-    deployOutput = "skipped: 04-test failed";
+    deployOutput = testOk ? "skipped: 04-test 게이트에서 사람이 승인하지 않음" : "skipped: 04-test failed";
   }
   await appendStateLog(runnerDir, key, {
     stage: "05-deploy",
@@ -191,54 +450,161 @@ export async function runPipeline(ticket: Ticket, config: Config, source: Ticket
   });
   console.log(`[pipeline:${key}] 05-deploy ${deployOk ? "ok" : "FAILED"}`);
 
-  // 06 maintain — judge, and close the loop on failure
-  const pipelineOk = testOk && deployOk;
-  if (!pipelineOk) {
-    const summary = [
-      `04-test: ${testOk ? "ok" : "FAILED"} (unit ${unitResult.ok ? "ok" : "fail"}, e2e ${e2eResult.ok ? "ok" : "fail"})`,
-      `05-deploy: ${deployOk ? "ok" : "FAILED"}`,
+  // Same rule as the 04 gate: the release manager declining is a decision about shipping, not a
+  // reason to skip maintenance. Only ask when there is actually something to release.
+  const releaseApproved = deployOk
+    ? await gate(
+        "05-deploy",
+        `${reviewNote}05 Deploy: PR 준비 완료.\n\n\`\`\`\n${deployOutput.slice(0, 1200)}\n\`\`\`\n\n프로덕션 게이트는 \`RELEASE_APPROVED=1\` 없이는 훅이 차단한다. 릴리스를 승인할지 판단해 달라.`,
+      )
+    : false;
+
+  // ── 06 Maintain ─────────────────────────────────────────────────────────────
+  await runMaintain(runnerDir, key, ticket, config, source, repoRoot, {
+    pipelineOk: testOk && deployOk && testApproved && releaseApproved,
+    e2eOk: e2eResult.ok,
+    summary: [
+      `04-test: ${testOk ? "ok" : "FAILED"} (unit ${unitResult.ok ? "ok" : "fail"}, e2e ${e2eResult.ok ? "ok" : "fail"}), 게이트 ${testApproved ? "승인" : "미승인"}`,
+      `05-deploy: ${deployOk ? "ok" : "FAILED"}, 게이트 ${releaseApproved ? "승인" : "미승인"}`,
       "",
       "unit/e2e output (truncated):",
       (unitResult.output + "\n" + e2eResult.output).slice(0, 1500),
-    ].join("\n");
+    ].join("\n"),
+  });
 
-    if (shouldCreateFollowupTicket(ticket, config.autoTicketLabel, config.maxAutoTicketDepth)) {
-      const depth = extractDepth(ticket) + 1;
-      const newTicket = await source.createTicket({
-        title: `[auto] fix: ${ticket.title}`,
-        body: `Automated failure from the AI-SDLC pipeline on ${ticket.url}.\n\nsdlc-depth: ${depth}\n\n${summary}`,
-        labels: [config.autoTicketLabel],
-      });
-      await appendStateLog(runnerDir, key, {
-        stage: "06-maintain",
-        startedAt: new Date().toISOString(),
-        endedAt: new Date().toISOString(),
-        ok: false,
-        sessionJsonlPath: null,
-        note: `created follow-up ticket ${newTicket.key} (${newTicket.url})`,
-      });
-      console.log(`[pipeline:${key}] 06-maintain: pipeline failed, opened follow-up ticket ${newTicket.key}`);
-    } else {
-      await source.comment(ticket.id, `AI-SDLC pipeline failed but the auto-ticket depth limit (${config.maxAutoTicketDepth}) was reached; not opening another ticket.\n\n${summary}`);
-      await appendStateLog(runnerDir, key, {
-        stage: "06-maintain",
-        startedAt: new Date().toISOString(),
-        endedAt: new Date().toISOString(),
-        ok: false,
-        sessionJsonlPath: null,
-        note: "loop depth limit reached, follow-up ticket suppressed",
-      });
-      console.log(`[pipeline:${key}] 06-maintain: depth limit reached, not creating a follow-up ticket`);
-    }
+  await gate("06-maintain", `06 Maintain 판정이 끝났다. 감지 결과와 후속 티켓 생성 여부를 확인하고 트리아지해 달라 (지금 고칠지, 일정에 넣을지, 기각할지).`);
+
+  // The pipeline always finishes normally from here — unlike the 01/02/03 gates, nothing after
+  // this point returns early, so "done" is unconditional regardless of how 06's gate resolved.
+  await writeLive(runnerDir, key, { stage: "06-maintain", phase: "done", since: new Date().toISOString() });
+}
+
+interface MaintainInput {
+  pipelineOk: boolean;
+  e2eOk: boolean;
+  summary: string;
+}
+
+/**
+ * 06 Maintain. The tier verdict comes from `ops/detect.sh` — a deterministic script,
+ * never the model — and only then does an agent get involved, at the authority the
+ * tier allows: 2σ diagnoses read-only, 3σ may write an intent.md and open a ticket.
+ */
+async function runMaintain(
+  runnerDir: string,
+  key: string,
+  ticket: Ticket,
+  config: Config,
+  source: TicketSource,
+  repoRoot: string,
+  input: MaintainInput,
+): Promise<void> {
+  const detectScript = join(repoRoot, config.detectScript);
+  const metricValue = input.e2eOk ? 0 : 1;
+
+  let tier: number | null = null;
+  let detectOutput: string;
+  if (existsSync(detectScript)) {
+    const run = await runCommand("bash", [detectScript, "--metric", config.detectMetric, "--value", String(metricValue)], repoRoot);
+    detectOutput = run.output;
+    tier = parseTier(run.output);
   } else {
+    detectOutput = `${config.detectScript} 없음 — 파이프라인 결과로 티어를 대체 판정한다.`;
+  }
+  // No detection script, or it printed nothing parseable: fall back to the pipeline
+  // verdict so a missing ops/ directory can never silence maintenance entirely.
+  if (tier === null) tier = input.pipelineOk ? 0 : 3;
+
+  console.log(`[pipeline:${key}] 06-maintain detect: tier=${tier}\n${detectOutput.trim()}`);
+
+  if (tier <= 1) {
     await appendStateLog(runnerDir, key, {
       stage: "06-maintain",
       startedAt: new Date().toISOString(),
       endedAt: new Date().toISOString(),
       ok: true,
       sessionJsonlPath: null,
-      note: "pipeline succeeded",
+      note: `tier=${tier} — 기록만 한다, 에이전트 미개입. ${detectOutput.trim().slice(0, 500)}`,
     });
-    console.log(`[pipeline:${key}] 06-maintain: pipeline succeeded`);
+    return;
   }
+
+  if (tier === 2) {
+    await runAndLog(
+      runnerDir,
+      key,
+      "06-maintain-diagnose",
+      `sdlc-maintain 스킬의 2σ 절차를 따르라. 지표 ${config.detectMetric} 가 2σ 구간에 있다. ` +
+        `읽기 전용으로 원인만 진단하고 보고하라. 파일을 쓰거나 티켓을 만들지 마라.\n\n감지 출력:\n${detectOutput}\n\n${input.summary}`,
+      repoRoot,
+      ["Read", "Glob", "Grep", "Bash(git log *)", "Bash(git diff *)", "Skill"],
+    );
+    return;
+  }
+
+  // tier 3 — the agent may act, but only by writing an intent.md and opening a ticket.
+  if (!shouldCreateFollowupTicket(ticket, config.autoTicketLabel, config.maxAutoTicketDepth)) {
+    await source.comment(
+      ticket.id,
+      `AI-SDLC 파이프라인이 3σ 이탈을 감지했지만 자동 티켓 깊이 상한(${config.maxAutoTicketDepth})에 도달해 새 티켓을 만들지 않는다. 사람이 처리해야 한다.\n\n${input.summary}`,
+    );
+    await appendStateLog(runnerDir, key, {
+      stage: "06-maintain",
+      startedAt: new Date().toISOString(),
+      endedAt: new Date().toISOString(),
+      ok: false,
+      sessionJsonlPath: null,
+      note: "tier=3 이지만 깊이 상한 도달 — 후속 티켓 억제, 사람에게 에스컬레이션",
+    });
+    console.log(`[pipeline:${key}] 06-maintain: depth limit reached, not creating a follow-up ticket`);
+    return;
+  }
+
+  const depth = extractDepth(ticket) + 1;
+  const actResult = await runAndLog(
+    runnerDir,
+    key,
+    "06-maintain-act",
+    `sdlc-maintain 스킬의 3σ 절차를 따르라. 지표 ${config.detectMetric} 가 3σ 구간이다.\n\n` +
+      `1. 원인을 진단한다.\n` +
+      `2. 진단 결과를 01 Plan 형식의 새 intent 문서로 ${join(repoRoot, "docs", "intent")} 아래에 쓴다.\n` +
+      `3. Linear MCP 로 새 이슈를 만든다. 라벨 "${config.autoTicketLabel}", 본문 첫 줄에 "sdlc-depth: ${depth}", ` +
+      `원인 티켓 ${ticket.url} 링크, 그리고 아래 요약을 포함한다.\n` +
+      `프로덕션에 직접 조치하지 마라 — PR 또는 사전 승인된 runbook 경유만 허용된다.\n\n` +
+      `감지 출력:\n${detectOutput}\n\n${input.summary}`,
+    repoRoot,
+    ["Read", "Write", "Glob", "Grep", "Skill", "mcp__linear__*"],
+  );
+  // Closing the loop must not depend on the agent's MCP call succeeding. If the sdlc-maintain
+  // session failed, the runner opens the follow-up ticket itself through the adapter — it holds
+  // the API key anyway, and a 3σ breach that silently produces no ticket is the one outcome this
+  // whole stage exists to prevent.
+  // ponytail: `ok` only proves the session exited cleanly, not that it really called Linear.
+  // Query the ticket back through the adapter if false negatives ever show up in practice.
+  let note: string;
+  if (actResult.ok) {
+    note = `tier=3 — sdlc-maintain 이 intent 문서와 후속 Linear 티켓(depth ${depth})을 생성했다. 루프가 01 로 돌아간다.`;
+  } else {
+    const why = actResult.error ?? (actResult.timedOut ? "타임아웃" : `exit ${actResult.exitCode}`);
+    try {
+      const created = await source.createTicket({
+        title: `[auto] fix: ${ticket.title}`,
+        body: `AI-SDLC 파이프라인이 ${config.detectMetric} 3σ 이탈을 감지했다. 원인 티켓: ${ticket.url}\n\nsdlc-depth: ${depth}\n\n${detectOutput}\n\n${input.summary}`,
+        labels: [config.autoTicketLabel],
+      });
+      note = `tier=3 — sdlc-maintain 세션 실패(${why}). 러너가 대신 후속 티켓 ${created.key} (${created.url}) 을 생성했다.`;
+      console.log(`[pipeline:${key}] 06-maintain: agent stage failed, runner opened ${created.key} instead`);
+    } catch (err) {
+      note = `tier=3 — sdlc-maintain 세션 실패(${why}) 이후 러너의 티켓 생성도 실패했다: ${(err as Error).message}. 루프가 닫히지 않았다, 사람이 처리해야 한다.`;
+      console.error(`[pipeline:${key}] 06-maintain: FAILED to open a follow-up ticket — the loop is open`);
+    }
+  }
+  await appendStateLog(runnerDir, key, {
+    stage: "06-maintain",
+    startedAt: new Date().toISOString(),
+    endedAt: new Date().toISOString(),
+    ok: false,
+    sessionJsonlPath: null,
+    note,
+  });
 }

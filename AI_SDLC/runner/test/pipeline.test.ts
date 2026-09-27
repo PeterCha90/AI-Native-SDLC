@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { extractDepth, shouldCreateFollowupTicket } from "../src/pipeline.ts";
+import { extractDepth, parseTier, shouldCreateFollowupTicket } from "../src/pipeline.ts";
 import type { Ticket } from "../src/adapters/types.ts";
 
 function ticket(overrides: Partial<Ticket>): Ticket {
@@ -23,6 +23,16 @@ test("shouldCreateFollowupTicket: human tickets (no auto label) are never blocke
 test("shouldCreateFollowupTicket: auto tickets below the depth limit may create another", () => {
   const t = ticket({ labels: ["sdlc-auto"], body: "sdlc-depth: 1" });
   assert.equal(shouldCreateFollowupTicket(t, "sdlc-auto", 3), true);
+});
+
+test("parseTier reads the tier the detection script printed", () => {
+  assert.equal(parseTier("e2e_failure_rate 1.0 (3.3σ)\ntier=3 action=act\n"), 3);
+  assert.equal(parseTier("tier=0 action=none"), 0);
+});
+
+test("parseTier returns null when the script printed nothing usable, so the caller can fall back", () => {
+  assert.equal(parseTier(""), null);
+  assert.equal(parseTier("bash: ops/detect.sh: No such file or directory"), null);
 });
 
 test("shouldCreateFollowupTicket: auto tickets at or past the depth limit are blocked", () => {

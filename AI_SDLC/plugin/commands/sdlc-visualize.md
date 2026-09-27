@@ -1,31 +1,35 @@
 ---
-description: zoetrope로 현재 SDLC 파이프라인 세션을 시각화하는 방법을 안내하고 실행한다.
-argument-hint: [session.jsonl]
+description: 파이프라인 대시보드 URL을 안내하고, 러너가 떠 있는지 확인한다.
+argument-hint: []
 ---
 
-**먼저 알아야 할 제약**: zoetrope는 Claude Code 세션 트랜스크립트(`.jsonl`) 전용 뷰어다. 자체 설정 DSL이나
-임의 파이프라인 포맷을 그리는 기능은 없다. 이 플러그인은 별도의 시각화 데이터 포맷을 만들지 않는다 —
-각 SDLC 단계가 `claude -p` 세션(또는 대화형 세션)으로 실행되면서 부수적으로 남기는 트랜스크립트를
-zoetrope가 그대로 읽는다.
+**먼저 알아야 할 것**: 이 파이프라인은 별도 시각화 도구를 쓰지 않는다. 러너(`AI_SDLC/runner`) 자신이
+`http://localhost:3939/`에서 대시보드를 서빙한다 — 러너가 떠 있기만 하면 브라우저로 그 주소를 열어
+카드/컬럼/게이트 칩을 바로 볼 수 있다.
 
 ## 절차
 
-1. 대상 세션 파일을 정한다.
-   - 인자로 경로(`$1`)가 주어지면 그것을 쓴다.
-   - 없으면 가장 최근 세션을 찾는다: `ls -t ~/.claude/projects/*/*.jsonl | head -1`
-2. CLI가 설치되어 있으면 실시간으로 연다:
+1. 러너가 떠 있는지 확인한다:
    ```bash
-   zoe <file.jsonl> --follow
+   curl -s localhost:3939/health
    ```
-   현재 프로젝트의 라이브 세션을 그냥 따라가려면 인자 없이 `zoe`만 실행해도 된다.
-3. CLI가 없거나 브라우저로 보고 싶으면: https://zoetrope.furkankly.dev/app 을 열고 대상 `.jsonl` 파일을
-   페이지에 드래그앤드롭한다. (WASM 기반, 설치 불필요)
-4. 헤드리스로 트리 구조만 텍스트로 확인하고 싶으면: `zoe inspect <file.jsonl>`
-5. 설치가 안 되어 있다면 안내한다: `brew install furkankly/tap/zoetrope` 또는 `cargo install zoetrope`
+   `{"status":"ok"}`가 나오면 정상이다. 응답이 없으면 `AI_SDLC/runner`에서 `npm start`로 먼저 띄우라고
+   안내한다.
+2. 대시보드를 연다:
+   ```bash
+   open http://localhost:3939/
+   ```
+   (열 수 없는 환경이면 URL을 그대로 출력해 사용자가 직접 열게 한다.)
+3. 대시보드 구성을 짧게 안내한다: 티켓 실행(run)마다 카드 하나, 카드 안에 7개 컬럼(00 Setup, 01 Plan …
+   06 Maintain)이 있고 각 컬럼 아래 승인 게이트 칩(승인자 역할, 승인 대기/승인/반려/자동 승인, 해당
+   Linear 게이트 하위 이슈 링크)이 보인다. 지금 도는 단계는 하이라이트돼 있고, 게이트가 대기 중이면
+   어느 역할이 어느 Linear 카드를 Done으로 옮겨야 하는지 그대로 적혀 있다. 06이 후속 티켓을 열면
+   "↺ 06 → 새 티켓 → 01"로 새로 생긴 실행의 카드에 링크된다.
+4. 세션 트랜스크립트 경로(`~/.claude/projects/<project-slug>/<session-id>.jsonl`)를 보고 싶으면
+   `/sdlc-status`를 쓴다 — 대시보드에도 같은 경로가 "세션 로그"로 표시된다.
 
 ## 하지 말 것
 
-- 이 플러그인이 만드는 `docs/intent/`, `docs/spec/`, `docs/plan/` 같은 문서나 별도 로그 포맷을
-  zoetrope에 직접 먹이려 하지 않는다. zoetrope가 그리는 건 오직 Claude Code 세션 `.jsonl`뿐이다.
-  파이프라인 흐름을 보고 싶으면 각 단계를 실제 Claude Code 세션으로 실행해 트랜스크립트가 남게 하고,
-  그 트랜스크립트를 zoetrope로 연다.
+- 이 플러그인이 만드는 `docs/intent/`, `docs/spec/`, `docs/plan/` 같은 문서를 대시보드에 직접 먹이려
+  하지 않는다. 대시보드는 `runner/.state/` 아래 단계 로그·게이트 맵·라이브 상태·메타 파일을 읽어 스스로
+  그린다 — 데이터를 따로 만들어 넣을 필요가 없다.

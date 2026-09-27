@@ -1,11 +1,27 @@
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { StageId } from "./gate.ts";
 
 const RUNNER_DIR = fileURLToPath(new URL("..", import.meta.url));
 
 export type TicketSourceKind = "linear" | "jira";
 export type E2EDriverKind = "ego-lite" | "aside";
+
+/**
+ * Who approves each stage. Straight out of the playbook: the product owner owns
+ * intent and spec, the engineer accepts the plan, the code owner signs off the
+ * tested diff, a named release manager holds the production gate, and the service
+ * owner triages what maintenance finds.
+ */
+export const DEFAULT_GATE_ROLES: Record<StageId, string> = {
+  "01-plan": "Product Owner",
+  "02-design": "Product Owner",
+  "03-build": "Engineer",
+  "04-test": "Code Owner",
+  "05-deploy": "Release Manager",
+  "06-maintain": "Service Owner",
+};
 
 export interface FileConfig {
   ticketSource?: TicketSourceKind;
@@ -20,6 +36,11 @@ export interface FileConfig {
   jiraProjectKey?: string;
   autoTicketLabel?: string;
   maxAutoTicketDepth?: number;
+  gateRoles?: Partial<Record<StageId, string>>;
+  gatePollIntervalMs?: number;
+  gateTimeoutMs?: number;
+  detectScript?: string;
+  detectMetric?: string;
 }
 
 export interface Config {
@@ -31,6 +52,15 @@ export interface Config {
   useWorktree: boolean;
   autoTicketLabel: string;
   maxAutoTicketDepth: number;
+  gateRoles: Record<StageId, string>;
+  gatePollIntervalMs: number;
+  gateTimeoutMs: number;
+  /** Repo-relative path to the deterministic 06 Maintain detection script. */
+  detectScript: string;
+  /** Metric name inside bands.yaml that 06 Maintain evaluates after a run. */
+  detectMetric: string;
+  /** SDLC_AUTO_APPROVE=1 — rehearsal only. Skips every human gate and says so in the log. */
+  autoApprove: boolean;
   linear: { webhookSecret: string; apiKey: string; teamId: string };
   jira: { baseUrl: string; email: string; apiToken: string; projectKey: string; webhookSecret: string };
 }
@@ -69,6 +99,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     useWorktree: file.useWorktree ?? true,
     autoTicketLabel: file.autoTicketLabel ?? "sdlc-auto",
     maxAutoTicketDepth: file.maxAutoTicketDepth ?? 3,
+    gateRoles: { ...DEFAULT_GATE_ROLES, ...(file.gateRoles ?? {}) },
+    gatePollIntervalMs: file.gatePollIntervalMs ?? 10_000,
+    gateTimeoutMs: file.gateTimeoutMs ?? 30 * 60 * 1000,
+    autoApprove: env.SDLC_AUTO_APPROVE === "1",
+    detectScript: file.detectScript ?? "ops/detect.sh",
+    detectMetric: file.detectMetric ?? "e2e_failure_rate",
     linear: {
       webhookSecret: env.LINEAR_WEBHOOK_SECRET ?? "",
       apiKey: env.LINEAR_API_KEY ?? "",
@@ -82,6 +118,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       webhookSecret: env.JIRA_WEBHOOK_SECRET ?? "",
     },
   };
+
+  if (!Number.isInteger(config.port) || config.port <= 0 || config.port > 65535) {
+    fail(`port must be an integer between 1 and 65535, got "${env.PORT ?? file.port}"`);
+  }
 
   if (config.ticketSource === "linear") {
     if (!config.linear.webhookSecret) fail("LINEAR_WEBHOOK_SECRET env var is required for ticketSource=linear");

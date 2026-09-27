@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import type { NewTicket, Ticket, TicketSource } from "./types.ts";
+import type { IssueComment, NewTicket, StateType, Ticket, TicketSource } from "./types.ts";
 
 export interface LinearAdapterOptions {
   webhookSecret: string;
@@ -47,7 +47,15 @@ async function graphql<T>(apiKey: string, query: string, variables: Record<strin
   return json.data as T;
 }
 
-/** Resolve label names to Linear label IDs for a team. Unknown names are dropped (logged), not fatal. */
+/**
+ * Resolve label names to Linear label IDs for a team, creating any that don't exist yet.
+ *
+ * Creating rather than skipping is load-bearing for the loop guard. `sdlc-auto` is how
+ * `shouldCreateFollowupTicket` recognises a pipeline-generated ticket; if the label were silently
+ * dropped because it isn't in the workspace, the follow-up ticket would come back through the
+ * webhook with no labels, be read as human-authored, and bypass the depth limit entirely — an
+ * unbounded ticket loop, which is the exact failure the depth limit exists to prevent.
+ */
 async function resolveLabelIds(apiKey: string, teamId: string, names: string[]): Promise<string[]> {
   if (names.length === 0) return [];
   const data = await graphql<{ issueLabels: { nodes: Array<{ id: string; name: string }> } }>(
@@ -62,9 +70,23 @@ async function resolveLabelIds(apiKey: string, teamId: string, names: string[]):
   const byName = new Map(data.issueLabels.nodes.map((l) => [l.name, l.id] as const));
   const ids: string[] = [];
   for (const name of names) {
-    const id = byName.get(name);
-    if (id) ids.push(id);
-    else console.warn(`[linear] label "${name}" not found on team ${teamId}, skipping`);
+    const existing = byName.get(name);
+    if (existing) {
+      ids.push(existing);
+      continue;
+    }
+    const created = await graphql<{ issueLabelCreate: { success: boolean; issueLabel: { id: string } } }>(
+      apiKey,
+      `mutation($input: IssueLabelCreateInput!) {
+        issueLabelCreate(input: $input) { success issueLabel { id } }
+      }`,
+      { input: { name, teamId } },
+    );
+    if (!created.issueLabelCreate.success) {
+      throw new Error(`Linear issueLabelCreate failed for "${name}" on team ${teamId}`);
+    }
+    console.log(`[linear] created missing label "${name}" on team ${teamId}`);
+    ids.push(created.issueLabelCreate.issueLabel.id);
   }
   return ids;
 }
@@ -142,6 +164,68 @@ export function createLinearAdapter(opts: LinearAdapterOptions): TicketSource {
         }`,
         { input: { issueId: ticketId, body } },
       );
+    },
+
+    async createSubIssue(parentId, t: NewTicket): Promise<Ticket> {
+      const labelIds = t.labels ? await resolveLabelIds(apiKey, teamId, t.labels) : [];
+      const data = await graphql<{
+        issueCreate: { success: boolean; issue: { id: string; identifier: string; title: string; description: string; url: string } };
+      }>(
+        apiKey,
+        `mutation($input: IssueCreateInput!) {
+          issueCreate(input: $input) {
+            success
+            issue { id identifier title description url }
+          }
+        }`,
+        { input: { teamId, parentId, title: t.title, description: t.body, labelIds } },
+      );
+      if (!data.issueCreate.success) throw new Error("Linear issueCreate (sub-issue) reported failure");
+      const issue = data.issueCreate.issue;
+      return {
+        id: issue.id,
+        key: issue.identifier,
+        title: issue.title,
+        body: issue.description ?? "",
+        labels: t.labels ?? [],
+        url: issue.url,
+      };
+    },
+
+    async getStateType(issueId): Promise<StateType> {
+      const data = await graphql<{ issue: { state: { type: string } | null } | null }>(
+        apiKey,
+        `query($id: String!) { issue(id: $id) { state { type } } }`,
+        { id: issueId },
+      );
+      const type = data.issue?.state?.type;
+      if (!type) throw new Error(`Linear issue ${issueId} has no workflow state`);
+      // Linear's WorkflowState.type vocabulary is already exactly our StateType set.
+      return type as StateType;
+    },
+
+    async listComments(issueId): Promise<IssueComment[]> {
+      const data = await graphql<{
+        issue: { comments: { nodes: Array<{ body: string; createdAt: string; user: { name: string } | null }> } } | null;
+      }>(
+        apiKey,
+        `query($id: String!) {
+          issue(id: $id) {
+            comments(first: 100) { nodes { body createdAt user { name } } }
+          }
+        }`,
+        { id: issueId },
+      );
+      // Sort explicitly rather than trusting the connection's default order: Linear paginates on
+      // `updatedAt` by default, so an edited old comment would otherwise sort last and get read as
+      // the rejection reason. The gate takes the final element, so this ordering is load-bearing.
+      return (data.issue?.comments.nodes ?? [])
+        .map((c) => ({
+          body: c.body,
+          author: c.user?.name ?? "unknown",
+          createdAt: c.createdAt,
+        }))
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     },
   };
 }

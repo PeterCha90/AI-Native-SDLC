@@ -1,11 +1,23 @@
 {
   "ticketSource": "linear",
-  "repoPath": "../..",
+  "repoPath": "../demo",
   "port": 3939,
   "e2eDriver": "ego-lite",
   "demoAppUrl": "http://localhost:5173",
   "useWorktree": true,
-  "linearTeamId": "REPLACE_WITH_LINEAR_TEAM_ID",
+  "linearTeamId": "bb9ddb14-778f-49bd-b8e5-429c737eab00",
   "autoTicketLabel": "sdlc-auto",
-  "maxAutoTicketDepth": 3
+  "maxAutoTicketDepth": 3,
+  "gateRoles": {
+    "01-plan": "Product Owner",
+    "02-design": "Product Owner",
+    "03-build": "Engineer",
+    "04-test": "Code Owner",
+    "05-deploy": "Release Manager",
+    "06-maintain": "Service Owner"
+  },
+  "gatePollIntervalMs": 10000,
+  "gateTimeoutMs": 1800000,
+  "detectScript": "ops/detect.sh",
+  "detectMetric": "e2e_failure_rate"
 }

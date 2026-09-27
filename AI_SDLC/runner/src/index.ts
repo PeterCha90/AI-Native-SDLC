@@ -1,10 +1,11 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { fileURLToPath } from "node:url";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { loadConfig } from "./config.ts";
 import { createTicketSource } from "./adapters/index.ts";
 import { runPipeline } from "./pipeline.ts";
 import { sessionsDirFor } from "./claude.ts";
+import { serveDashboardPage, serveRunsJson } from "./dashboard-routes.ts";
 
 const RUNNER_DIR = dirname(fileURLToPath(import.meta.url)).replace(/\/src$/, "");
 
@@ -23,7 +24,8 @@ function json(res: ServerResponse, status: number, body: unknown): void {
 }
 
 // Serializes pipeline runs to exactly one at a time — a demo runner has no need for concurrency,
-// and it keeps zoetrope's live view unambiguous (one active session at a time).
+// and it keeps the dashboard's "what's running right now" view unambiguous (one active session
+// at a time).
 class Queue {
   private tasks: Array<() => Promise<void>> = [];
   private running = false;
@@ -52,11 +54,22 @@ export function startServer(): void {
   const config = loadConfig();
   const source = createTicketSource(config);
   const queue = new Queue();
+  const stateDir = join(RUNNER_DIR, ".state");
 
   const server = createServer(async (req, res) => {
     try {
       if (req.method === "GET" && req.url === "/health") {
         json(res, 200, { status: "ok" });
+        return;
+      }
+
+      if (req.method === "GET" && req.url === "/") {
+        await serveDashboardPage(res);
+        return;
+      }
+
+      if (req.method === "GET" && req.url === "/api/runs") {
+        await serveRunsJson(res, stateDir);
         return;
       }
 
@@ -94,7 +107,7 @@ export function startServer(): void {
     console.log(`[ai-sdlc-runner] webhook: POST /webhook/${config.ticketSource}`);
     console.log(`[ai-sdlc-runner] sessions for repo ${config.repoPath}:`);
     console.log(`  ${sessionsDirFor(config.repoPath)}`);
-    console.log(`[ai-sdlc-runner] watch a stage live: zoe <session.jsonl> --follow`);
+    console.log(`[ai-sdlc-runner] dashboard: http://localhost:${config.port}/`);
   });
 }
 

@@ -1,0 +1,13 @@
+{
+  "extraKnownMarketplaces": {
+    "ai-sdlc-local": {
+      "source": {
+        "source": "directory",
+        "path": ".."
+      }
+    }
+  },
+  "enabledPlugins": {
+    "ai-native-sdlc@ai-sdlc-local": true
+  }
+}

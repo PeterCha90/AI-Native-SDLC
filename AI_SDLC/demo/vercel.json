@@ -1,0 +1,11 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "buildCommand": "cd frontend && npm install && VITE_API_URL=/api npm run build",
+  "outputDirectory": "frontend/dist",
+  "functions": {
+    "api/[...path].py": {
+      "includeFiles": "backend/app/**"
+    }
+  }
+}

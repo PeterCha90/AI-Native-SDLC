@@ -1,0 +1,492 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AI-SDLC 파이프라인 대시보드</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-0: #f9f9f7;
+    --surface-1: #fcfcfb;
+    --surface-2: #ffffff;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #898781;
+    --hairline: #e1e0d9;
+    --border: rgba(11, 11, 11, 0.1);
+    --accent: #2a78d6;
+    --accent-soft: #e8f0fb;
+    --good: #0ca30c;
+    --good-soft: #e5f6e5;
+    --warning: #b9790a;
+    --warning-soft: #fdf1d9;
+    --critical: #d03b3b;
+    --critical-soft: #fbe7e7;
+    --pulse-ring: rgba(42, 120, 214, 0.35);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --surface-0: #0d0d0d;
+      --surface-1: #1a1a19;
+      --surface-2: #232322;
+      --text-primary: #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted: #898781;
+      --hairline: #2c2c2a;
+      --border: rgba(255, 255, 255, 0.1);
+      --accent: #3987e5;
+      --accent-soft: #16283b;
+      --good: #0ca30c;
+      --good-soft: #103410;
+      --warning: #fab219;
+      --warning-soft: #3a2c0c;
+      --critical: #e66767;
+      --critical-soft: #3a1717;
+      --pulse-ring: rgba(57, 135, 229, 0.4);
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface-0: #0d0d0d;
+    --surface-1: #1a1a19;
+    --surface-2: #232322;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #898781;
+    --hairline: #2c2c2a;
+    --border: rgba(255, 255, 255, 0.1);
+    --accent: #3987e5;
+    --accent-soft: #16283b;
+    --good: #0ca30c;
+    --good-soft: #103410;
+    --warning: #fab219;
+    --warning-soft: #3a2c0c;
+    --critical: #e66767;
+    --critical-soft: #3a1717;
+    --pulse-ring: rgba(57, 135, 229, 0.4);
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    background: var(--surface-0);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    overflow-x: hidden;
+  }
+  body { padding: 20px 16px 48px; }
+
+  header.page-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    max-width: 1480px;
+    margin: 0 auto 20px;
+  }
+  header.page-header h1 { font-size: 20px; margin: 0; }
+  header.page-header .sub { color: var(--text-secondary); font-size: 13px; }
+
+  main { max-width: 1480px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+
+  .empty-state {
+    border: 1px dashed var(--hairline);
+    border-radius: 12px;
+    padding: 40px 24px;
+    text-align: center;
+    color: var(--text-secondary);
+    background: var(--surface-1);
+  }
+  .empty-state code {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 12px;
+  }
+
+  .run-card {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 16px;
+  }
+  .run-card-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .run-title { font-size: 15px; font-weight: 600; }
+  .run-title a { color: inherit; text-decoration: none; border-bottom: 1px solid var(--hairline); }
+  .run-title a:hover { border-bottom-color: var(--accent); }
+  .run-key { color: var(--text-secondary); font-weight: 400; margin-right: 6px; }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    background: var(--surface-2);
+    white-space: nowrap;
+  }
+  .badge.rehearsal { color: var(--warning); border-color: var(--warning); background: var(--warning-soft); }
+  .badge.auto { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+
+  .loop-note {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin: -4px 0 12px;
+    padding: 6px 10px;
+    border-radius: 8px;
+    background: var(--accent-soft);
+    display: inline-flex;
+    gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .loop-note a { color: var(--accent); }
+
+  .flow {
+    display: flex;
+    gap: 10px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+  .col {
+    flex: 1 1 0;
+    min-width: 150px;
+    border: 1px solid var(--hairline);
+    border-radius: 10px;
+    background: var(--surface-2);
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    transition: box-shadow 0.2s ease, border-color 0.2s ease;
+  }
+  .col.active {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--pulse-ring);
+    animation: pulse 1.8s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 2px var(--pulse-ring); }
+    50% { box-shadow: 0 0 0 6px transparent; }
+  }
+  .col-label { font-size: 12px; font-weight: 700; }
+  .col-caption { font-size: 10.5px; color: var(--text-muted); margin-top: -6px; }
+
+  .step {
+    font-size: 11.5px;
+    border-radius: 6px;
+    padding: 6px 8px;
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+  }
+  .step-top { display: flex; justify-content: space-between; gap: 6px; align-items: center; }
+  .step-stage { color: var(--text-secondary); word-break: break-all; }
+  .step-status { font-weight: 600; white-space: nowrap; }
+  .step-status.done { color: var(--good); }
+  .step-status.failed { color: var(--critical); }
+  .step-status.running { color: var(--accent); }
+  .step-duration { font-size: 10.5px; color: var(--text-muted); margin-top: 2px; }
+  .step-note { font-size: 10.5px; color: var(--text-muted); margin-top: 3px; white-space: pre-wrap; }
+  .session-log {
+    margin-top: 3px;
+    font-size: 10px;
+    color: var(--text-muted);
+    cursor: pointer;
+    text-decoration: underline dotted;
+  }
+  .session-log:hover { color: var(--accent); }
+
+  .pending-pill {
+    font-size: 11px;
+    color: var(--text-muted);
+    border: 1px dashed var(--hairline);
+    border-radius: 6px;
+    padding: 6px 8px;
+    text-align: center;
+  }
+
+  .gate-chip {
+    margin-top: auto;
+    border-radius: 8px;
+    padding: 7px 8px;
+    font-size: 11px;
+    border: 1px solid var(--border);
+  }
+  .gate-chip .gate-role { color: var(--text-muted); font-size: 10.5px; }
+  .gate-chip .gate-verdict { font-weight: 700; display: flex; align-items: center; gap: 4px; }
+  .gate-chip a { color: inherit; }
+  .gate-chip.waiting {
+    background: var(--warning-soft);
+    color: var(--warning);
+    border-color: var(--warning);
+    animation: pulse-warn 1.4s ease-in-out infinite;
+  }
+  @keyframes pulse-warn {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.72; }
+  }
+  .gate-chip.approved { background: var(--good-soft); color: var(--good); }
+  .gate-chip.rejected { background: var(--critical-soft); color: var(--critical); }
+  .gate-chip.auto { background: var(--accent-soft); color: var(--accent); }
+  .gate-chip .gate-waiting-line {
+    margin-top: 4px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  footer.page-footer {
+    max-width: 1480px;
+    margin: 24px auto 0;
+    color: var(--text-muted);
+    font-size: 11px;
+    text-align: center;
+  }
+
+  ::-webkit-scrollbar { height: 8px; }
+  ::-webkit-scrollbar-thumb { background: var(--hairline); border-radius: 8px; }
+  main > * { min-width: 0; }
+  .col, .step, .gate-chip { overflow-wrap: anywhere; }
+  @media (max-width: 600px) { body { padding-left: 16px; padding-right: 16px; } header.page-header { max-width: 100%; } }
+</style>
+</head>
+<body>
+  <header class="page-header">
+    <h1>AI-SDLC 파이프라인 대시보드</h1>
+    <div class="sub" id="last-updated">불러오는 중…</div>
+  </header>
+  <main id="runs-root">
+    <div class="empty-state">불러오는 중…</div>
+  </main>
+  <footer class="page-footer">2초마다 자동 갱신 · <code>GET /api/runs</code></footer>
+
+<script>
+(function () {
+  "use strict";
+
+  var COLUMN_CAPTIONS = {
+    "00": "환경/게이트 준비",
+    "01": "의도(intent) 작성",
+    "02": "설계(spec) 작성",
+    "03": "계획 수립 + 구현",
+    "04": "테스트 루프",
+    "05": "리뷰 + PR",
+    "06": "감지 + 트리아지",
+  };
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function fmtDuration(ms) {
+    if (!ms || ms < 0) return "";
+    var s = Math.round(ms / 1000);
+    if (s < 60) return s + "초";
+    var m = Math.floor(s / 60);
+    var rem = s % 60;
+    return m + "분 " + rem + "초";
+  }
+
+  function extractKeyFromUrl(url) {
+    if (!url) return null;
+    var m = url.match(/[A-Za-z][A-Za-z0-9]*-\d+/);
+    return m ? m[0] : null;
+  }
+
+  function stepStatusClass(status) {
+    if (status === "완료") return "done";
+    if (status === "실패") return "failed";
+    if (status === "실행 중") return "running";
+    return "";
+  }
+
+  function renderStep(step) {
+    var cls = stepStatusClass(step.status);
+    var since = step.status === "실행 중" ? step.startedAt : null;
+    var duration = step.durationMs ? fmtDuration(step.durationMs) : "";
+    var html = '<div class="step">';
+    html += '<div class="step-top"><span class="step-stage">' + esc(step.stage) + '</span>';
+    html += '<span class="step-status ' + cls + '"' + (since ? ' data-since="' + esc(since) + '"' : "") + '>' + esc(step.status) + "</span></div>";
+    if (duration) html += '<div class="step-duration">' + duration + "</div>";
+    if (step.note) html += '<div class="step-note">' + esc(truncate(step.note, 220)) + "</div>";
+    if (step.sessionJsonlPath) {
+      html +=
+        '<div class="session-log" title="클릭해서 복사" data-copy="' +
+        esc(step.sessionJsonlPath) +
+        '">세션 로그: ' +
+        esc(shorten(step.sessionJsonlPath)) +
+        "</div>";
+    }
+    html += "</div>";
+    return html;
+  }
+
+  function truncate(s, n) {
+    return s.length > n ? s.slice(0, n) + "…" : s;
+  }
+  function shorten(p) {
+    var parts = p.split("/");
+    return parts.length > 3 ? ".../" + parts.slice(-2).join("/") : p;
+  }
+
+  function renderGate(gate, columnActive) {
+    if (!gate) return "";
+    var stateClass = "";
+    var icon = "";
+    if (gate.verdict === "승인 대기") { stateClass = "waiting"; icon = "⏳"; }
+    else if (gate.verdict === "승인") { stateClass = "approved"; icon = "✅"; }
+    else if (gate.verdict === "반려") { stateClass = "rejected"; icon = "⛔"; }
+    else if (gate.verdict === "자동 승인") { stateClass = "auto"; icon = "🤖"; }
+
+    var html = '<div class="gate-chip ' + stateClass + '">';
+    html += '<div class="gate-role">승인자: ' + esc(gate.role) + "</div>";
+    html += '<div class="gate-verdict">' + icon + " " + esc(gate.verdict) + "</div>";
+    if (gate.verdict === "승인 대기" && columnActive) {
+      html += '<div class="gate-waiting-line">' + esc(gate.role) + " 승인 대기 중 — Linear에서 카드를 Done으로</div>";
+    }
+    if (gate.verdict === "반려" && gate.note) {
+      html += '<div class="step-note">' + esc(truncate(gate.note, 180)) + "</div>";
+    }
+    if (gate.url) {
+      html += '<div style="margin-top:4px"><a href="' + esc(gate.url) + '" target="_blank" rel="noopener">Linear 게이트 열기 →</a></div>';
+    }
+    html += "</div>";
+    return html;
+  }
+
+  function renderColumn(col) {
+    var html = '<div class="col' + (col.active ? " active" : "") + '">';
+    html += '<div class="col-label">' + esc(col.label) + "</div>";
+    html += '<div class="col-caption">' + esc(COLUMN_CAPTIONS[col.id] || "") + "</div>";
+    if (col.steps.length === 0 && !col.gate) {
+      html += '<div class="pending-pill">대기</div>';
+    } else {
+      col.steps.forEach(function (s) { html += renderStep(s); });
+    }
+    html += renderGate(col.gate, col.active);
+    html += "</div>";
+    return html;
+  }
+
+  function renderRun(run, allKeys) {
+    var isAuto = run.depth > 0 || (run.labels || []).indexOf("sdlc-auto") !== -1;
+    var badges = "";
+    if (isAuto) badges += '<span class="badge auto">sdlc-auto</span>';
+    if (run.depth > 0) badges += '<span class="badge">depth ' + run.depth + "</span>";
+    if (run.autoApprove) badges += '<span class="badge rehearsal">리허설 모드(자동 승인)</span>';
+
+    var loopNote = "";
+    if (run.depth > 0 && run.parentUrl) {
+      var parentKey = extractKeyFromUrl(run.parentUrl) || "원인 티켓";
+      loopNote +=
+        '<div class="loop-note">↺ <a href="' + esc(run.parentUrl) + '" target="_blank" rel="noopener">' + esc(parentKey) + "</a> 에서 생성 (depth " + run.depth + ")</div>";
+    }
+    if (run.followup) {
+      var targetExists = allKeys.indexOf(run.followup.key) !== -1;
+      var followLabel = run.followup.url
+        ? '<a href="' + esc(run.followup.url) + '" target="_blank" rel="noopener">' + esc(run.followup.key) + "</a>"
+        : esc(run.followup.key);
+      loopNote +=
+        '<div class="loop-note">↺ 06 → ' +
+        followLabel +
+        " → 01" +
+        (targetExists ? ' · <a href="#run-' + esc(run.followup.key) + '" class="scroll-to" data-target="' + esc(run.followup.key) + '">해당 카드로 이동</a>' : "") +
+        "</div>";
+    }
+
+    var html = '<section class="run-card" id="run-' + esc(run.key) + '">';
+    html += '<div class="run-card-head">';
+    html += '<div class="run-title"><span class="run-key">' + esc(run.key) + "</span>";
+    html += run.url ? '<a href="' + esc(run.url) + '" target="_blank" rel="noopener">' + esc(run.title) + "</a>" : esc(run.title);
+    html += "</div>";
+    html += badges;
+    html += "</div>";
+    html += loopNote;
+    html += '<div class="flow">';
+    run.columns.forEach(function (c) { html += renderColumn(c); });
+    html += "</div>";
+    html += "</section>";
+    return html;
+  }
+
+  function render(runs) {
+    var root = document.getElementById("runs-root");
+    if (!runs.length) {
+      root.innerHTML =
+        '<div class="empty-state">아직 실행 중인 파이프라인이 없다.<br/><br/>' +
+        "Linear에서 새 티켓을 만들면 webhook이 러너를 깨우고, 여기에 카드가 나타난다.<br/>" +
+        "웹훅 경로: <code>POST /webhook/linear</code></div>";
+      return;
+    }
+    var keys = runs.map(function (r) { return r.key; });
+    root.innerHTML = runs.map(function (r) { return renderRun(r, keys); }).join("");
+
+    root.querySelectorAll(".session-log").forEach(function (el) {
+      el.addEventListener("click", function () {
+        var text = el.getAttribute("data-copy");
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).catch(function () {});
+        }
+        var original = el.textContent;
+        el.textContent = "복사됨: " + shorten(text);
+        setTimeout(function () { el.textContent = original; }, 1500);
+      });
+    });
+    root.querySelectorAll(".scroll-to").forEach(function (el) {
+      el.addEventListener("click", function (ev) {
+        ev.preventDefault();
+        var target = document.getElementById("run-" + el.getAttribute("data-target"));
+        if (target) target.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+    });
+  }
+
+  function tickDurations() {
+    document.querySelectorAll('.step-status.running[data-since]').forEach(function (el) {
+      var since = new Date(el.getAttribute("data-since")).getTime();
+      if (!isFinite(since)) return;
+      var durEl = el.closest(".step").querySelector(".step-duration");
+      var text = fmtDuration(Date.now() - since);
+      if (durEl) durEl.textContent = text;
+      else if (text) {
+        var d = document.createElement("div");
+        d.className = "step-duration";
+        d.textContent = text;
+        el.closest(".step").appendChild(d);
+      }
+    });
+  }
+
+  function poll() {
+    fetch("/api/runs")
+      .then(function (r) { return r.json(); })
+      .then(function (runs) {
+        render(runs);
+        document.getElementById("last-updated").textContent = "마지막 갱신: " + new Date().toLocaleTimeString("ko-KR");
+      })
+      .catch(function (err) {
+        document.getElementById("last-updated").textContent = "갱신 실패: " + err.message;
+      });
+  }
+
+  poll();
+  setInterval(poll, 2000);
+  setInterval(tickDurations, 1000);
+})();
+</script>
+</body>
+</html>

@@ -11,6 +11,8 @@ export interface RunStageOptions {
   cwd: string;
   /** Tool names passed to --allowedTools, e.g. ["Read", "Write", "Bash(git *)"]. */
   allowedTools?: string[];
+  /** Plugin loaded for this session only (--plugin-dir). Carries the sdlc-* skills, hooks and subagents. */
+  pluginDir?: string;
   /** Default 20 minutes. The process is killed (SIGTERM, then SIGKILL) past this. */
   timeoutMs?: number;
   /** Default "bypassPermissions" — this runner is unattended, there's no one to answer prompts. */
@@ -23,7 +25,7 @@ export interface StageResult {
   timedOut: boolean;
   stdout: string;
   stderr: string;
-  /** Absolute path to the JSONL transcript zoetrope can render, or null if it was never found. */
+  /** Absolute path to the JSONL session transcript, kept for debugging, or null if it was never found. */
   sessionJsonlPath: string | null;
   error?: string;
 }
@@ -44,6 +46,11 @@ export async function runStage(opts: RunStageOptions): Promise<StageResult> {
   const args = ["-p", opts.prompt, "--output-format", "stream-json", "--verbose", "--session-id", sessionId, "--permission-mode", opts.permissionMode ?? "bypassPermissions"];
   if (opts.allowedTools?.length) {
     args.push("--allowedTools", opts.allowedTools.join(" "));
+  }
+  // Loads the plugin for this session only, so a stage gets the sdlc-* skills, the
+  // hook layer and the subagents without the repo having to install anything first.
+  if (opts.pluginDir) {
+    args.push("--plugin-dir", opts.pluginDir);
   }
 
   const result = await new Promise<StageResult>((resolvePromise) => {

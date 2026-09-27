@@ -1,0 +1,15 @@
+{
+  "name": "ai-sdlc-local",
+  "owner": {
+    "name": "Peter Cha",
+    "url": "https://github.com/PeterCha90"
+  },
+  "description": "AI-native SDLC 6단계 가드레일을 담은 로컬 마켓플레이스. demo/ 저장소가 이 마켓플레이스를 통해 플러그인을 자동 활성화한다.",
+  "plugins": [
+    {
+      "name": "ai-native-sdlc",
+      "source": "./plugin",
+      "description": "AI-native SDLC 6단계(Plan/Design/Build/Test/Deploy/Maintain)와 3층 가드레일(CLAUDE.md/skills/hooks)."
+    }
+  ]
+}

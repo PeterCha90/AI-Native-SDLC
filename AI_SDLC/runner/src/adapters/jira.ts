@@ -45,5 +45,26 @@ export function createJiraAdapter(_opts: JiraAdapterOptions): TicketSource {
       // and body { body: _body } (or Atlassian Document Format for v3).
       throw new Error("not implemented: call Jira REST API to add a comment here");
     },
+
+    async createSubIssue(_parentId, _t) {
+      // Same POST as createTicket, plus fields.parent = { id: _parentId } and
+      // an issuetype whose hierarchy level sits below the parent's (e.g. "Sub-task").
+      throw new Error("not implemented: call Jira REST API to create a sub-task here");
+    },
+
+    async getStateType(_issueId) {
+      // GET {baseUrl}/rest/api/3/issue/{issueId}?fields=status and map
+      // fields.status.statusCategory.key onto StateType:
+      //   "new" -> "unstarted", "indeterminate" -> "started", "done" -> "completed".
+      // Jira has no distinct canceled category — map the project's Canceled/Won't Do
+      // resolution to "canceled" explicitly, or the approval gates can never be rejected.
+      throw new Error("not implemented: read the Jira issue status category here");
+    },
+
+    async listComments(_issueId) {
+      // GET {baseUrl}/rest/api/3/issue/{issueId}/comment, oldest first, mapping
+      // each to { body, author: author.displayName, createdAt: created }.
+      throw new Error("not implemented: read Jira issue comments here");
+    },
   };
 }
