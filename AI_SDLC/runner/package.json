@@ -15,5 +15,8 @@
   "devDependencies": {
     "@types/node": "^22.10.0",
     "typescript": "^5.7.0"
+  },
+  "dependencies": {
+    "@slack/bolt": "^5.1.0"
   }
 }

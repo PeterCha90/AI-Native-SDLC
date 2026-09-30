@@ -1,10 +1,15 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { fileURLToPath } from "node:url";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { loadConfig } from "./config.ts";
 import { createTicketSource } from "./adapters/index.ts";
+import type { RecentIssue, Ticket } from "./adapters/types.ts";
 import { runPipeline } from "./pipeline.ts";
 import { sessionsDirFor } from "./claude.ts";
+import { noopEvents, safeEvents, type PipelineEvents } from "./events.ts";
+import { LinearWatcher } from "./linear-watcher.ts";
+import { startSlackApp } from "./slack/app.ts";
+import type { createSlackNotifier } from "./slack/notifier.ts";
 
 const RUNNER_DIR = dirname(fileURLToPath(import.meta.url)).replace(/\/src$/, "");
 
@@ -29,9 +34,20 @@ class Queue {
   private tasks: Array<() => Promise<void>> = [];
   private running = false;
 
-  push(task: () => Promise<void>): void {
+  /** Number of runs waiting (not counting one already in flight). */
+  get size(): number {
+    return this.tasks.length;
+  }
+
+  /**
+   * Queues a run and returns its 1-based position in line: 1 means "starts right away" (nothing
+   * else is running or waiting), N>1 means N-1 runs are ahead of it.
+   */
+  enqueue(task: () => Promise<void>): number {
     this.tasks.push(task);
+    const position = (this.running ? 1 : 0) + this.tasks.length;
     this.drain();
+    return position;
   }
 
   private async drain(): Promise<void> {
@@ -49,10 +65,74 @@ class Queue {
   }
 }
 
+// A bad SLACK_BOT_TOKEN/SLACK_APP_TOKEN combination can reject an internal promise deep inside
+// @slack/bolt's Socket Mode client (its `apps.connections.open` retry path) in a way that never
+// reaches the `try/catch` around `startSlackApp()` below — Node's default behaviour for that is
+// to crash the whole process. That's exactly the one failure this whole feature must never cause
+// (see the design doc's error-handling table: a dead Slack connection must never take down the
+// webhook path). Logging and continuing here is deliberate, not a blanket "ignore all errors":
+// every code path we control already has its own try/catch; this is a last-resort net for the
+// ones we don't.
+process.on("unhandledRejection", (reason) => {
+  console.error("[ai-sdlc-runner] unhandled rejection (continuing):", reason);
+});
+
 export function startServer(): void {
   const config = loadConfig();
   const source = createTicketSource(config);
   const queue = new Queue();
+  const stateDir = join(RUNNER_DIR, ".state");
+
+  // Which keys currently have a live `runPipeline` call in flight (as opposed to merely having
+  // `.state/*` files on disk from a run the runner no longer remembers — see gate.ts's
+  // "runner restarted" note). Populated only for the duration of runTicket below.
+  const activeKeys = new Set<string>();
+  const isRunActive = (key: string): boolean => activeKeys.has(key);
+
+  // Set once Slack starts (if it does) — declared here so the LinearWatcher's onNew closure and
+  // the Slack app's markTicketSeen closure can both refer to it without a startup-order dependency.
+  let events: PipelineEvents = noopEvents;
+  let slackNotifier: ReturnType<typeof createSlackNotifier> | null = null;
+  let watcher: LinearWatcher<RecentIssue> | null = null;
+
+  function runTicket(ticket: Ticket): Promise<void> {
+    const key = ticket.key || ticket.id;
+    activeKeys.add(key);
+    return runPipeline(ticket, config, source, RUNNER_DIR, events).finally(() => activeKeys.delete(key));
+  }
+
+  async function setupNotifications(): Promise<void> {
+    if (config.slack) {
+      const { notifier } = await startSlackApp({
+        config,
+        source,
+        stateDir,
+        runnerDir: RUNNER_DIR,
+        enqueue: (ticket) => queue.enqueue(() => runTicket(ticket)),
+        isRunActive,
+        markTicketSeen: async (id: string) => {
+          if (watcher) await watcher.markSeen(id);
+        },
+      });
+      slackNotifier = notifier;
+      events = safeEvents(notifier);
+    }
+
+    if (config.linearTrigger === "poll") {
+      watcher = new LinearWatcher<RecentIssue>({
+        listRecentIssues: (since) => source.listRecentIssues(since),
+        statePath: join(stateDir, "linear-watch.json"),
+        intervalMs: config.linearPollIntervalMs,
+        onNew: async (t) => {
+          if (!slackNotifier) return; // poll trigger with no Slack has nowhere to announce a new ticket
+          const startMode = config.slack?.startMode ?? "button";
+          await slackNotifier.postTicketNotice(t, startMode === "auto" ? "auto" : "new");
+          if (startMode === "auto") queue.enqueue(() => runTicket(t));
+        },
+      });
+      watcher.start();
+    }
+  }
 
   const server = createServer(async (req, res) => {
     try {
@@ -78,7 +158,7 @@ export function startServer(): void {
           json(res, 200, { ignored: true });
           return;
         }
-        queue.push(() => runPipeline(ticket, config, source, RUNNER_DIR));
+        queue.enqueue(() => runTicket(ticket));
         json(res, 202, { queued: true, key: ticket.key });
         return;
       }
@@ -96,6 +176,12 @@ export function startServer(): void {
     console.log(`[ai-sdlc-runner] sessions for repo ${config.repoPath}:`);
     console.log(`  ${sessionsDirFor(config.repoPath)}`);
     console.log(`[ai-sdlc-runner] health check: http://localhost:${config.port}/health`);
+  });
+
+  // Fire-and-forget: Slack/Socket Mode startup and the Linear poller must never block the HTTP
+  // server (or the existing webhook path, which works today with neither) from listening.
+  setupNotifications().catch((err) => {
+    console.error("[ai-sdlc-runner] failed to start Slack/Linear notifications:", err);
   });
 }
 

@@ -23,6 +23,8 @@ export const DEFAULT_GATE_ROLES: Record<StageId, string> = {
   "06-maintain": "Service Owner",
 };
 
+export type LinearTriggerKind = "poll" | "webhook";
+
 export interface FileConfig {
   ticketSource?: TicketSourceKind;
   repoPath?: string;
@@ -41,6 +43,15 @@ export interface FileConfig {
   gateTimeoutMs?: number;
   detectScript?: string;
   detectMetric?: string;
+  /** How new tickets are discovered. Defaults to "poll" when Slack is on, "webhook" otherwise. */
+  linearTrigger?: LinearTriggerKind;
+  /** How often LinearWatcher polls for new tickets when linearTrigger is "poll". Default 30000. */
+  linearPollIntervalMs?: number;
+  slack?: {
+    channelId: string;
+    startMode?: "button" | "auto";
+    roleGroups?: Record<string, string>;
+  };
 }
 
 export interface Config {
@@ -63,6 +74,19 @@ export interface Config {
   autoApprove: boolean;
   linear: { webhookSecret: string; apiKey: string; teamId: string };
   jira: { baseUrl: string; email: string; apiToken: string; projectKey: string; webhookSecret: string };
+  linearTrigger: LinearTriggerKind;
+  linearPollIntervalMs: number;
+  /**
+   * Non-null only when both SLACK_BOT_TOKEN and SLACK_APP_TOKEN are set AND
+   * sdlc.config.json has slack.channelId — all three are required to turn Slack on.
+   */
+  slack: null | {
+    botToken: string;
+    appToken: string;
+    channelId: string;
+    startMode: "button" | "auto";
+    roleGroups: Record<string, string>;
+  };
 }
 
 function loadFileConfig(configPath: string): FileConfig {
@@ -89,6 +113,25 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const file = loadFileConfig(configPath);
 
   const ticketSource = file.ticketSource ?? "linear";
+
+  // Slack turns on only when both tokens are present (secrets, env-only) AND the channel is
+  // configured in the file — any one missing means "Slack is off", not "half-configured".
+  const slackBotToken = env.SLACK_BOT_TOKEN ?? "";
+  const slackAppToken = env.SLACK_APP_TOKEN ?? "";
+  const slack: Config["slack"] =
+    slackBotToken && slackAppToken && file.slack?.channelId
+      ? {
+          botToken: slackBotToken,
+          appToken: slackAppToken,
+          channelId: file.slack.channelId,
+          startMode: file.slack.startMode ?? "button",
+          roleGroups: file.slack.roleGroups ?? {},
+        }
+      : null;
+
+  // Default trigger follows Slack: once Slack is on, LinearWatcher polling is the natural way to
+  // surface new tickets as channel notices. Without Slack, the pre-existing webhook path stays default.
+  const linearTrigger: LinearTriggerKind = file.linearTrigger ?? (slack ? "poll" : "webhook");
 
   const config: Config = {
     ticketSource,
@@ -117,6 +160,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       projectKey: file.jiraProjectKey ?? "",
       webhookSecret: env.JIRA_WEBHOOK_SECRET ?? "",
     },
+    linearTrigger,
+    linearPollIntervalMs: file.linearPollIntervalMs ?? 30_000,
+    slack,
   };
 
   if (!Number.isInteger(config.port) || config.port <= 0 || config.port > 65535) {
@@ -124,7 +170,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
 
   if (config.ticketSource === "linear") {
-    if (!config.linear.webhookSecret) fail("LINEAR_WEBHOOK_SECRET env var is required for ticketSource=linear");
+    if (config.linearTrigger === "webhook" && !config.linear.webhookSecret) {
+      fail('LINEAR_WEBHOOK_SECRET env var is required when linearTrigger is "webhook"');
+    }
     if (!config.linear.apiKey) fail("LINEAR_API_KEY env var is required for ticketSource=linear");
     if (!config.linear.teamId) fail("linearTeamId is required in sdlc.config.json for ticketSource=linear");
   } else if (config.ticketSource === "jira") {

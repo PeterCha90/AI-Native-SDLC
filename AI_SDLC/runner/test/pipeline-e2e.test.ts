@@ -141,6 +141,9 @@ function makeConfig(repoPath: string): Config {
     detectMetric: "e2e_failure_rate",
     linear: { webhookSecret: "x", apiKey: "x", teamId: "x" },
     jira: { baseUrl: "", email: "", apiToken: "", projectKey: "", webhookSecret: "" },
+    linearTrigger: "webhook",
+    linearPollIntervalMs: 30_000,
+    slack: null,
   };
 }
 
