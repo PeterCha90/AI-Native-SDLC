@@ -12,6 +12,7 @@
 - **Linear에 티켓이 생기면 Slack 채널에 알림이 온다.** 알림에서 바로 파이프라인을 시작할 수 있다.
 - **승인은 Slack 버튼으로 한다.** 누른 사람이 그 단계의 승인 역할인지 봇이 확인한다. 승인 기록은 지금처럼 Linear 게이트 카드에 남는다.
 - **공개 URL이 필요 없다.** Slack Socket Mode와 Linear 폴링만 쓰므로 ngrok 같은 터널 없이 노트북에서도 돈다.
+- **화면은 Linear와 Slack 두 곳뿐이다.** 러너 대시보드(`GET /`)는 없앤다 (§9).
 
 성공 기준: 새 팀이 README만 보고 (1) 매니페스트로 Slack 앱 생성 → (2) 토큰 두 개와 Linear 키 설정 → (3) `npm start` 만으로, Linear 티켓 생성 알림을 받고 Slack 버튼으로 6단계를 끝까지 승인할 수 있다.
 
@@ -69,7 +70,7 @@ interface PipelineEvents {
 }
 ```
 
-이벤트 전송 실패는 파이프라인을 멈추지 않는다. 로그만 남긴다. Slack이 죽어도 Linear와 대시보드로 계속 승인할 수 있어야 한다.
+이벤트 전송 실패는 파이프라인을 멈추지 않는다. 로그만 남긴다. Slack이 죽어도 Linear 카드로 계속 승인할 수 있어야 한다.
 
 ### 3.2 어댑터 확장
 
@@ -189,3 +190,19 @@ Slack이 켜지고 `linearTrigger`가 `"poll"`이면 `LINEAR_WEBHOOK_SECRET`은 
 - `AI_SDLC/README.md`에 "3-C. Slack으로 쓰기" 절: 매니페스트로 앱 만들기 → 토큰 → 채널 초대 → 사용자 그룹 ID 찾기 → `npm start` → 사용법 표.
 - `runner/README.md`에 설정·이벤트 구조.
 - `USAGE.md`에서 삭제된 `slides/` 관련 1장을 제거하고 Slack 절 추가.
+- README 맨 위의 대시보드 스크린샷은 Slack 스레드 예시로 바꾼다. 실제 워크스페이스에서 수동 확인할 때 캡처한다. 그 전까지는 텍스트 예시로 둔다.
+
+## 9. 대시보드 제거
+
+진행 현황은 두 곳에서 이미 보인다. Linear 원 티켓 아래 게이트 하위 이슈 6개가 단계별 승인 현황판이고, Slack 스레드가 단계 진행과 06→01 루프를 실시간으로 보여 준다. 러너 대시보드는 같은 정보를 세 번째로 그리는 화면이라 없앤다.
+
+| 지운다 | 남긴다 |
+| --- | --- |
+| `src/dashboard.ts`, `src/dashboard-routes.ts`, `src/dashboard-server.ts`, `src/dashboard.html` | `.state/<key>.meta.json`, `.state/<key>.live.json` 쓰기 — `/sdlc status`가 읽는다 |
+| `scripts/seed-demo-state.ts`, `test/dashboard.test.ts`, `package.json`의 `seed:demo`·`dashboard:*` 스크립트 | `RunMeta`·`LiveStatus` 타입 — `src/state.ts`로 옮긴다 |
+| `index.ts`의 `GET /`, `GET /api/runs` 라우트 | `GET /health`, `POST /webhook/<source>` |
+| 플러그인 `/sdlc-visualize` 명령 | `/sdlc-status` — 대시보드 안내를 Linear 원 티켓 링크로 바꾼다 |
+| `docs/assets/dashboard.png` | — |
+
+문서(`AI_SDLC/README.md`, `runner/README.md`, `plugin/README.md`, `USAGE.md`, `docs/architecture.md`, `docs/demo-scenario.md`, 루트 `README.md`)의 대시보드 안내는 "Linear 원 티켓의 하위 이슈 + Slack 스레드"로 바꾼다. 플러그인 명령이 하나 줄어드므로 플러그인 버전을 올린다.
+
