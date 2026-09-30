@@ -8,7 +8,8 @@ import type { Ticket, TicketSource } from "./adapters/types.ts";
 import { runStage, type StageResult } from "./claude.ts";
 import { runE2E } from "./e2e.ts";
 import { awaitApproval, gateMapPath, readGateMap, type GateMap, type StageId } from "./gate.ts";
-import type { LiveStatus, RunMeta } from "./dashboard.ts";
+import type { LiveStatus, RunMeta, StageLogEntry } from "./state.ts";
+import { noopEvents, type PipelineEvents } from "./events.ts";
 
 const DEPTH_MARKER = /sdlc-depth:\s*(\d+)/i;
 
@@ -41,15 +42,6 @@ export function parseTier(output: string): number | null {
   return match ? Number(match[1]) : null;
 }
 
-interface StageLogEntry {
-  stage: string;
-  startedAt: string;
-  endedAt: string;
-  ok: boolean;
-  sessionJsonlPath: string | null;
-  note?: string;
-}
-
 async function appendStateLog(runnerDir: string, key: string, entry: StageLogEntry): Promise<void> {
   const stateDir = join(runnerDir, ".state");
   await mkdir(stateDir, { recursive: true });
@@ -66,7 +58,7 @@ async function appendStateLog(runnerDir: string, key: string, entry: StageLogEnt
   await writeFile(statePath, JSON.stringify(log, null, 2));
 }
 
-/** Written once, at the start of a run — everything the dashboard needs that never changes again. */
+/** Written once, at the start of a run — everything a listener needs that never changes again. */
 async function writeMeta(runnerDir: string, key: string, meta: RunMeta): Promise<void> {
   await mkdir(join(runnerDir, ".state"), { recursive: true });
   await writeFile(join(runnerDir, ".state", `${key}.meta.json`), JSON.stringify(meta, null, 2));
@@ -74,8 +66,8 @@ async function writeMeta(runnerDir: string, key: string, meta: RunMeta): Promise
 
 /**
  * The single choke point for "what is this run doing right now". Every write replaces the whole
- * file — this is a live snapshot for the dashboard to poll, not a log — so the dashboard never has
- * to guess whether a stage is still running from a stale entry.
+ * file — this is a live snapshot for `/sdlc status` (a later task) to poll, not a log — so a
+ * reader never has to guess whether a stage is still running from a stale entry.
  */
 async function writeLive(runnerDir: string, key: string, status: LiveStatus): Promise<void> {
   await mkdir(join(runnerDir, ".state"), { recursive: true });
@@ -84,7 +76,7 @@ async function writeLive(runnerDir: string, key: string, status: LiveStatus): Pr
 
 /**
  * Best-effort: an auto-generated ticket's body always contains a link back to the ticket that
- * caused it (see `runMaintain` below), so the dashboard can draw the "↺ back to 01" loop arrow.
+ * caused it (see `runMaintain` below), so a listener can draw the "↺ back to 01" loop.
  * A human-authored ticket has no such link, and that's fine — it just means depth 0 has no parent.
  */
 function extractParentUrl(body: string): string | undefined {
@@ -98,16 +90,19 @@ async function runAndLog(
   stage: string,
   prompt: string,
   cwd: string,
+  events: PipelineEvents,
   allowedTools?: string[],
 ): Promise<StageResult> {
   const startedAt = new Date().toISOString();
   await writeLive(runnerDir, key, { stage, phase: "running", since: startedAt });
   console.log(`[pipeline:${key}] ${stage} starting`);
+  await events.stageStarted(key, stage);
   const result = await runStage({ prompt, cwd, allowedTools, pluginDir: PLUGIN_DIR });
+  const endedAt = new Date().toISOString();
   await appendStateLog(runnerDir, key, {
     stage,
     startedAt,
-    endedAt: new Date().toISOString(),
+    endedAt,
     ok: result.ok,
     sessionJsonlPath: result.sessionJsonlPath,
     note: result.error,
@@ -115,6 +110,8 @@ async function runAndLog(
   console.log(
     `[pipeline:${key}] ${stage} ${result.ok ? "ok" : "FAILED"}${result.sessionJsonlPath ? ` (session: ${result.sessionJsonlPath})` : ""}`,
   );
+  const durationMs = Math.max(0, new Date(endedAt).getTime() - new Date(startedAt).getTime());
+  await events.stageFinished(key, stage, result.ok, durationMs, result.error);
   return result;
 }
 
@@ -152,7 +149,7 @@ async function detectTestCommand(repoDir: string): Promise<[string, string[]] | 
  * Deliberately an agent step rather than a runner API call — this is the playbook's
  * "write the outcome back through an MCP connector" in its most literal form, and it
  * means the sub-issues, their role labels and their descriptions are authored in the
- * same session log the dashboard links to.
+ * same session log the gate map links to.
  */
 async function setupGates(
   runnerDir: string,
@@ -160,6 +157,7 @@ async function setupGates(
   ticket: Ticket,
   config: Config,
   repoRoot: string,
+  events: PipelineEvents,
 ): Promise<GateMap> {
   const outPath = gateMapPath(runnerDir, key);
   await mkdir(join(runnerDir, ".state"), { recursive: true });
@@ -189,7 +187,7 @@ async function setupGates(
     `issueId 는 Linear 내부 UUID 여야 한다 (식별자 ENG-12 가 아니라).`,
   ].join("\n");
 
-  await runAndLog(runnerDir, key, "00-setup", prompt, repoRoot, ["Write", "mcp__linear__*"]);
+  await runAndLog(runnerDir, key, "00-setup", prompt, repoRoot, events, ["Write", "mcp__linear__*"]);
   // Throws with an explicit message if the agent didn't produce a usable map — the
   // pipeline must not fall through into an ungated run.
   return readGateMap(runnerDir, key);
@@ -251,13 +249,19 @@ function artifactWarning(result: StageResult, artifactPath: string): string {
   return "";
 }
 
-export async function runPipeline(ticket: Ticket, config: Config, source: TicketSource, runnerDir: string): Promise<void> {
+export async function runPipeline(
+  ticket: Ticket,
+  config: Config,
+  source: TicketSource,
+  runnerDir: string,
+  events: PipelineEvents = noopEvents,
+): Promise<void> {
   const key = ticket.key || ticket.id;
   const repoRoot = config.repoPath;
 
-  // Written once, up front, so the dashboard can show a card for this run the moment it starts —
+  // Written once, up front, so a listener can show a card for this run the moment it starts —
   // it never has to wait for 00-setup to finish.
-  await writeMeta(runnerDir, key, {
+  const meta: RunMeta = {
     key,
     title: ticket.title,
     url: ticket.url,
@@ -267,7 +271,9 @@ export async function runPipeline(ticket: Ticket, config: Config, source: Ticket
     autoApprove: config.autoApprove,
     startedAt: new Date().toISOString(),
     gateRoles: config.gateRoles,
-  });
+  };
+  await writeMeta(runnerDir, key, meta);
+  await events.runStarted(meta);
 
   // The worktree is created up front, before stage 01, so that every stage — the documents as
   // well as the code — runs in ONE checkout.
@@ -287,7 +293,7 @@ export async function runPipeline(ticket: Ticket, config: Config, source: Ticket
   await mkdir(join(workDir, "docs", "spec"), { recursive: true });
   await mkdir(join(workDir, "docs", "plan"), { recursive: true });
 
-  const gates = config.autoApprove ? null : await setupGates(runnerDir, key, ticket, config, workDir);
+  const gates = config.autoApprove ? null : await setupGates(runnerDir, key, ticket, config, workDir, events);
 
   /** Blocks on the human who owns this stage. Returns false if they rejected or the wait timed out. */
   async function gate(stage: StageId, summary: string): Promise<boolean> {
@@ -302,6 +308,7 @@ export async function runPipeline(ticket: Ticket, config: Config, source: Ticket
       gateUrl: gates[stage].url,
       since: new Date().toISOString(),
     });
+    await events.gateWaiting(key, stage, config.gateRoles[stage], gates[stage], summary);
     const result = await awaitApproval({
       source,
       gate: gates[stage],
@@ -320,6 +327,7 @@ export async function runPipeline(ticket: Ticket, config: Config, source: Ticket
       sessionJsonlPath: null,
       note: result.approved ? `${config.gateRoles[stage]} 승인` : `중단: ${result.reason}`,
     });
+    await events.gateResolved(key, stage, result.approved, result.reason);
     return result.approved;
   }
 
@@ -331,10 +339,12 @@ export async function runPipeline(ticket: Ticket, config: Config, source: Ticket
     `sdlc-intent 스킬을 사용해 아래 티켓에서 ${docsIntent} 를 작성하라.\n\n` +
       `티켓: ${ticket.title}\n\n${ticket.body}\n\n출처: ${ticket.url}`,
     workDir,
+    events,
     ["Read", "Write", "Glob", "Grep", "Skill"],
   );
   if (!(await gate("01-plan", `${artifactWarning(intentResult, docsIntent)}01 Plan 산출물: \`${docsIntent}\`\n\n문제/원하는 결과/영향 범위/제약/미해결 질문이 티켓 의도와 맞는지 확인해 달라.`))) {
     await writeLive(runnerDir, key, { stage: "01-plan", phase: "aborted", since: new Date().toISOString() });
+    await events.runFinished(key, "aborted");
     return;
   }
 
@@ -345,10 +355,12 @@ export async function runPipeline(ticket: Ticket, config: Config, source: Ticket
     "02-spec",
     `sdlc-spec 스킬을 사용해 ${docsIntent} 를 읽고 ${docsSpec} 를 작성하라. 정책 충돌은 해당 설계 항목 바로 아래 인라인으로 표시하라.`,
     workDir,
+    events,
     ["Read", "Write", "Glob", "Grep", "Skill"],
   );
   if (!(await gate("02-design", `${artifactWarning(specResult, docsSpec)}02 Design 산출물: \`${docsSpec}\`\n\n"정책 충돌" 섹션을 각 정책 담당자와 정리한 뒤 진행 여부를 결정해 달라.`))) {
     await writeLive(runnerDir, key, { stage: "02-design", phase: "aborted", since: new Date().toISOString() });
+    await events.runFinished(key, "aborted");
     return;
   }
 
@@ -359,10 +371,12 @@ export async function runPipeline(ticket: Ticket, config: Config, source: Ticket
     "03-plan",
     `sdlc-plan 스킬을 사용해 ${docsSpec} 를 읽고 ${docsPlan} 를 작성하라. "무엇이 깨질 수 있는가" 심문을 반드시 포함하라. 코드는 아직 수정하지 마라.`,
     workDir,
+    events,
     ["Read", "Write", "Glob", "Grep", "Skill"],
   );
   if (!(await gate("03-build", `${artifactWarning(planResult, docsPlan)}03 Build 착수 계획: \`${docsPlan}\`\n\n변경할 파일 목록과 "무엇이 깨질 수 있는가"를 심문하고, 이대로 구현해도 되는지 판단해 달라.\n승인 후에만 에이전트가 코드를 편집한다.`))) {
     await writeLive(runnerDir, key, { stage: "03-build", phase: "aborted", since: new Date().toISOString() });
+    await events.runFinished(key, "aborted");
     return;
   }
 
@@ -373,6 +387,7 @@ export async function runPipeline(ticket: Ticket, config: Config, source: Ticket
     `승인된 ${docsPlan} 의 작업 목록을 순서대로 구현하라. 계획에 없는 파일은 건드리지 마라 — ` +
       `plan-drift 훅이 커밋 시점에 계획과 실제 변경을 대조한다. 저장소 CLAUDE.md 의 규칙을 따르라.`,
     workDir,
+    events,
   );
 
   // ── 04 Test ─────────────────────────────────────────────────────────────────
@@ -383,6 +398,7 @@ export async function runPipeline(ticket: Ticket, config: Config, source: Ticket
     `sdlc-test 스킬을 사용해 ${docsPlan} 의 "성공 기준"을 실제로 실행하고, 통과할 때까지 피드백 루프를 돌려라. ` +
       `이건 버그 수정 작업일 수 있으니 테스트를 고쳐서 통과시키지 마라. 마지막에 verifier 서브에이전트로 독립 검증을 받아라.`,
     workDir,
+    events,
   );
 
   const testCmd = await detectTestCommand(workDir);
@@ -422,6 +438,7 @@ export async function runPipeline(ticket: Ticket, config: Config, source: Ticket
       `sdlc-review 스킬을 사용해 이 브랜치의 diff 를 Bugs/Security/Compliance 세 패스로 리뷰하라. ` +
         `저장소 REVIEW.md 의 정책을 따르고, ${docsSpec} 의 요구사항 대비 준수 여부를 확인하라. 승인하지 마라 — 발견만 보고하라.`,
       workDir,
+      events,
       ["Read", "Glob", "Grep", "Bash(git diff *)", "Bash(git log *)", "Bash(git status)", "Skill"],
     );
     // The release manager needs to know whether a review actually happened. An unreported failed
@@ -460,23 +477,33 @@ export async function runPipeline(ticket: Ticket, config: Config, source: Ticket
     : false;
 
   // ── 06 Maintain ─────────────────────────────────────────────────────────────
-  await runMaintain(runnerDir, key, ticket, config, source, repoRoot, {
-    pipelineOk: testOk && deployOk && testApproved && releaseApproved,
-    e2eOk: e2eResult.ok,
-    summary: [
-      `04-test: ${testOk ? "ok" : "FAILED"} (unit ${unitResult.ok ? "ok" : "fail"}, e2e ${e2eResult.ok ? "ok" : "fail"}), 게이트 ${testApproved ? "승인" : "미승인"}`,
-      `05-deploy: ${deployOk ? "ok" : "FAILED"}, 게이트 ${releaseApproved ? "승인" : "미승인"}`,
-      "",
-      "unit/e2e output (truncated):",
-      (unitResult.output + "\n" + e2eResult.output).slice(0, 1500),
-    ].join("\n"),
-  });
+  await runMaintain(
+    runnerDir,
+    key,
+    ticket,
+    config,
+    source,
+    repoRoot,
+    {
+      pipelineOk: testOk && deployOk && testApproved && releaseApproved,
+      e2eOk: e2eResult.ok,
+      summary: [
+        `04-test: ${testOk ? "ok" : "FAILED"} (unit ${unitResult.ok ? "ok" : "fail"}, e2e ${e2eResult.ok ? "ok" : "fail"}), 게이트 ${testApproved ? "승인" : "미승인"}`,
+        `05-deploy: ${deployOk ? "ok" : "FAILED"}, 게이트 ${releaseApproved ? "승인" : "미승인"}`,
+        "",
+        "unit/e2e output (truncated):",
+        (unitResult.output + "\n" + e2eResult.output).slice(0, 1500),
+      ].join("\n"),
+    },
+    events,
+  );
 
   await gate("06-maintain", `06 Maintain 판정이 끝났다. 감지 결과와 후속 티켓 생성 여부를 확인하고 트리아지해 달라 (지금 고칠지, 일정에 넣을지, 기각할지).`);
 
   // The pipeline always finishes normally from here — unlike the 01/02/03 gates, nothing after
   // this point returns early, so "done" is unconditional regardless of how 06's gate resolved.
   await writeLive(runnerDir, key, { stage: "06-maintain", phase: "done", since: new Date().toISOString() });
+  await events.runFinished(key, "done");
 }
 
 interface MaintainInput {
@@ -498,6 +525,7 @@ async function runMaintain(
   source: TicketSource,
   repoRoot: string,
   input: MaintainInput,
+  events: PipelineEvents,
 ): Promise<void> {
   const detectScript = join(repoRoot, config.detectScript);
   const metricValue = input.e2eOk ? 0 : 1;
@@ -537,6 +565,7 @@ async function runMaintain(
       `sdlc-maintain 스킬의 2σ 절차를 따르라. 지표 ${config.detectMetric} 가 2σ 구간에 있다. ` +
         `읽기 전용으로 원인만 진단하고 보고하라. 파일을 쓰거나 티켓을 만들지 마라.\n\n감지 출력:\n${detectOutput}\n\n${input.summary}`,
       repoRoot,
+      events,
       ["Read", "Glob", "Grep", "Bash(git log *)", "Bash(git diff *)", "Skill"],
     );
     return;
@@ -573,6 +602,7 @@ async function runMaintain(
       `프로덕션에 직접 조치하지 마라 — PR 또는 사전 승인된 runbook 경유만 허용된다.\n\n` +
       `감지 출력:\n${detectOutput}\n\n${input.summary}`,
     repoRoot,
+    events,
     ["Read", "Write", "Glob", "Grep", "Skill", "mcp__linear__*"],
   );
   // Closing the loop must not depend on the agent's MCP call succeeding. If the sdlc-maintain
@@ -594,6 +624,7 @@ async function runMaintain(
       });
       note = `tier=3 — sdlc-maintain 세션 실패(${why}). 러너가 대신 후속 티켓 ${created.key} (${created.url}) 을 생성했다.`;
       console.log(`[pipeline:${key}] 06-maintain: agent stage failed, runner opened ${created.key} instead`);
+      await events.followupCreated(key, { key: created.key, url: created.url });
     } catch (err) {
       note = `tier=3 — sdlc-maintain 세션 실패(${why}) 이후 러너의 티켓 생성도 실패했다: ${(err as Error).message}. 루프가 닫히지 않았다, 사람이 처리해야 한다.`;
       console.error(`[pipeline:${key}] 06-maintain: FAILED to open a follow-up ticket — the loop is open`);
