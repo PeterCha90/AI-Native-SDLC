@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSlackInterviewChannel } from "../src/slack/interview.ts";
@@ -227,6 +227,44 @@ test("onThreadMessage: two real replies accumulate, and the message update shows
   const outcome = await pending;
   assert.equal(outcome.kind, "answers");
   if (outcome.kind === "answers") assert.equal(outcome.answers.length, 2);
+});
+
+test("onThreadMessage: after the state-file-missing fallback, a second reply never calls chat.update with an empty ts", async () => {
+  const stateDir = await tmpStateDir();
+  await seedThread(stateDir, "ENG-9");
+  const client = fakeClient();
+  const channel = createSlackInterviewChannel({
+    client,
+    channel: "C1",
+    stateDir,
+    getRequesterEmail: () => undefined,
+    timeoutMs: 60_000,
+  });
+
+  const pending = channel.ask("ENG-9", ["질문"], 1, 5);
+  await new Promise((r) => setTimeout(r, 10));
+
+  // Simulate the state file going missing out-of-band (e.g. deleted) — ask() has already
+  // returned its pending promise, so the in-memory ActiveAsk is still tracking this thread.
+  await rm(join(stateDir, "ENG-9.interview.json"));
+
+  // First reply after the file vanished: hits the "existing === null" fallback, which persists a
+  // fresh state with messageTs:"" and — per the existing guard — must skip the chat.update (no
+  // reliable ts to edit yet).
+  await channel.onThreadMessage({ threadTs: "100.0", user: "U-bob", text: "답1", ts: "100.1" });
+  assert.equal(client.updated.length, 0, "first reply after the fallback must not call chat.update");
+
+  // Second reply: the state file now exists again (written by the fallback above) but its
+  // messageTs is still "" — chat.update must still be skipped rather than called with ts:"".
+  await channel.onThreadMessage({ threadTs: "100.0", user: "U-carol", text: "답2", ts: "100.2" });
+  assert.equal(client.updated.length, 0, "a second reply must still skip chat.update while messageTs is empty");
+  assert.ok(
+    client.updated.every((u: any) => u.ts !== ""),
+    "chat.update must never be called with an empty ts",
+  );
+
+  await channel.onButton("ENG-9", "apply", "U-someone");
+  await pending;
 });
 
 // ── onButton ─────────────────────────────────────────────────────────────────

@@ -107,6 +107,14 @@ export function createSlackNotifier(
 
     async gateWaiting(key: string, stage: StageId, role: string, gate: GateRef, summary: string): Promise<void> {
       const rec = await ensureThread(key, `🆕 ${key}`);
+      // A rework round reopens this same stage's gate under the same stage id — clear any stale
+      // "who resolved it" marker from a previous round before posting the new wait message, or
+      // gateResolved would wrongly read the new round as already handled (see finding: stale
+      // gateResolvedBy freezes the Slack gate message after a rework round).
+      if (rec.gateResolvedBy[stage]) {
+        delete rec.gateResolvedBy[stage];
+        await writeThread(stateDir, key, rec);
+      }
       const msg = gateMessage({ key, ticketId: rec.ticketId, stage, role, roleGroupId: roleGroups[role], summary, gateUrl: gate.url, state: "waiting" });
       const posted = await client.chat.postMessage({
         channel: rec.channel,

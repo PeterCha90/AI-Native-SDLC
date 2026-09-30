@@ -2,8 +2,9 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { loadConfig } from "./config.ts";
+import type { Config } from "./config.ts";
 import { createTicketSource } from "./adapters/index.ts";
-import type { RecentIssue, Ticket } from "./adapters/types.ts";
+import type { RecentIssue, Ticket, TicketSource } from "./adapters/types.ts";
 import { runPipeline } from "./pipeline.ts";
 import { sessionsDirFor } from "./claude.ts";
 import { noopEvents, safeEvents, type PipelineEvents } from "./events.ts";
@@ -26,6 +27,64 @@ function readRawBody(req: IncomingMessage): Promise<string> {
 function json(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(body));
+}
+
+/**
+ * Builds the HTTP handler `startServer` mounts. Exported (and factored out of `startServer`
+ * itself) so it's unit-testable against a real `http.Server` bound to an ephemeral port, without
+ * standing up Slack or the LinearWatcher.
+ *
+ * The `/webhook/<source>` route is only ever mounted when `config.linearTrigger === "webhook"` —
+ * when Slack is on (the default once it's configured turns `linearTrigger` to `"poll"`),
+ * `LINEAR_WEBHOOK_SECRET` is optional (see README, "poll mode needs no webhook secret"), so
+ * leaving this route live would let anyone reaching the port forge a signature against an empty
+ * secret. `source.verify` also refuses an empty secret on its own (defense in depth), but the
+ * route must not even be reachable in poll mode.
+ */
+export function createRequestHandler(
+  config: Config,
+  source: TicketSource,
+  enqueueTicket: (t: Ticket) => number,
+): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
+  return async (req, res) => {
+    try {
+      if (req.method === "GET" && req.url === "/health") {
+        json(res, 200, { status: "ok" });
+        return;
+      }
+
+      const match = req.method === "POST" && req.url?.match(/^\/webhook\/([^/?]+)/);
+      if (match) {
+        if (config.linearTrigger !== "webhook") {
+          json(res, 404, { error: `webhook endpoint disabled — linearTrigger is "${config.linearTrigger}", not "webhook"` });
+          return;
+        }
+        const sourceParam = match[1];
+        if (sourceParam !== config.ticketSource) {
+          json(res, 404, { error: `no adapter configured for source "${sourceParam}"` });
+          return;
+        }
+        const rawBody = await readRawBody(req);
+        if (!source.verify(req.headers, rawBody)) {
+          json(res, 401, { error: "signature verification failed" });
+          return;
+        }
+        const ticket = source.parse(rawBody);
+        if (!ticket) {
+          json(res, 200, { ignored: true });
+          return;
+        }
+        enqueueTicket(ticket);
+        json(res, 202, { queued: true, key: ticket.key });
+        return;
+      }
+
+      json(res, 404, { error: "not found" });
+    } catch (err) {
+      console.error("[server] request handler error:", err);
+      json(res, 500, { error: "internal error" });
+    }
+  };
 }
 
 // Serializes pipeline runs to exactly one at a time — a demo runner has no need for concurrency,
@@ -159,6 +218,7 @@ export function startServer(): void {
           if (watcher) await watcher.markSeen(id);
         },
         getRequesterEmail,
+        setRequesterEmail: (key: string, email: string) => requesterEmails.set(key, email),
       });
       slackNotifier = notifier;
       events = safeEvents(notifier);
@@ -191,41 +251,7 @@ export function startServer(): void {
     }
   }
 
-  const server = createServer(async (req, res) => {
-    try {
-      if (req.method === "GET" && req.url === "/health") {
-        json(res, 200, { status: "ok" });
-        return;
-      }
-
-      const match = req.method === "POST" && req.url?.match(/^\/webhook\/([^/?]+)/);
-      if (match) {
-        const sourceParam = match[1];
-        if (sourceParam !== config.ticketSource) {
-          json(res, 404, { error: `no adapter configured for source "${sourceParam}"` });
-          return;
-        }
-        const rawBody = await readRawBody(req);
-        if (!source.verify(req.headers, rawBody)) {
-          json(res, 401, { error: "signature verification failed" });
-          return;
-        }
-        const ticket = source.parse(rawBody);
-        if (!ticket) {
-          json(res, 200, { ignored: true });
-          return;
-        }
-        enqueueTicket(ticket);
-        json(res, 202, { queued: true, key: ticket.key });
-        return;
-      }
-
-      json(res, 404, { error: "not found" });
-    } catch (err) {
-      console.error("[server] request handler error:", err);
-      json(res, 500, { error: "internal error" });
-    }
-  });
+  const server = createServer(createRequestHandler(config, source, enqueueTicket));
 
   server.listen(config.port, () => {
     console.log(`[ai-sdlc-runner] listening on :${config.port}`);

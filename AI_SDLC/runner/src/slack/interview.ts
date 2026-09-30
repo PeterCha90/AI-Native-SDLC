@@ -7,12 +7,13 @@
 // `users.lookupByEmail`) the caller injects — so this module is testable with a fake
 // client, same as notifier.ts.
 
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { InterviewChannel, InterviewOutcome } from "../interview.ts";
 import type { SlackClientLike } from "./notifier.ts";
 import { readThread } from "./threads.ts";
 import { interviewMessage } from "./blocks.ts";
+import { writeJsonAtomic } from "../fs-atomic.ts";
 
 export interface InterviewState {
   round: number;
@@ -59,9 +60,7 @@ async function readInterviewState(stateDir: string, key: string): Promise<Interv
 }
 
 async function writeInterviewState(stateDir: string, key: string, state: InterviewState): Promise<void> {
-  const path = interviewStatePath(stateDir, key);
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, JSON.stringify(state, null, 2), "utf8");
+  await writeJsonAtomic(interviewStatePath(stateDir, key), state);
 }
 
 /** Everything needed to re-render `interviewMessage` for an ask that's still open, kept in memory only. */
@@ -184,7 +183,11 @@ export function createSlackInterviewChannel(o: CreateSlackInterviewChannelOption
     };
     state.answers.push({ user: m.user ?? "", text: m.text, ts: m.ts });
     await writeInterviewState(stateDir, key, state);
-    if (!existing) return;
+    // No reliable message to edit — either this is the first reply after the fallback above (just
+    // created state.messageTs: ""), or a prior reply already hit that fallback and persisted it
+    // that way. Guessing at a ts (e.g. the thread root) would edit the wrong message, so skip the
+    // update in both cases rather than calling chat.update with ts: "".
+    if (!state.messageTs) return;
 
     const msg = interviewMessage({
       key,

@@ -57,6 +57,17 @@ test("verify() rejects a missing signature header", () => {
   assert.equal(adapter.verify({}, body), false);
 });
 
+test("verify() rejects everything when webhookSecret is empty, even a signature computed against the empty string", () => {
+  // Defense in depth: poll mode leaves LINEAR_WEBHOOK_SECRET unset (see README — "poll mode needs
+  // no webhook secret"), but anyone can compute HMAC-SHA256("", body) themselves since the key is
+  // known (empty). index.ts is expected to 404 the webhook route outright when linearTrigger isn't
+  // "webhook", but verify() must never green-light a forged request on its own either.
+  const noSecretAdapter = createLinearAdapter({ webhookSecret: "", apiKey: "unused", teamId: "unused" });
+  const body = JSON.stringify({ hello: "world" });
+  const headers = { "linear-signature": sign(body, "") };
+  assert.equal(noSecretAdapter.verify(headers, body), false);
+});
+
 test("parse() returns null for events that aren't Issue/create", () => {
   const commentEvent = JSON.stringify({ type: "Comment", action: "create", data: { id: "1" } });
   assert.equal(adapter.parse(commentEvent), null);

@@ -99,6 +99,11 @@ export function createLinearAdapter(opts: LinearAdapterOptions): TicketSource {
     name: "linear",
 
     verify(headers, rawBody) {
+      // Defense in depth: an empty secret (poll mode, where LINEAR_WEBHOOK_SECRET is optional)
+      // must never verify anything, even a signature someone computed against the empty string
+      // themselves — index.ts is the primary guard (it doesn't route /webhook/<source> at all
+      // unless linearTrigger is "webhook"), but this must hold on its own too.
+      if (!webhookSecret) return false;
       const signature = getHeader(headers, "Linear-Signature");
       if (!signature) return false;
       const expected = createHmac("sha256", webhookSecret).update(rawBody, "utf8").digest("hex");

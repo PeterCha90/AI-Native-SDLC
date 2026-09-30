@@ -47,6 +47,26 @@ export class LinearWatcher<T extends { id: string; createdAt: string }> {
    *  callers) observe "no poll in flight" deterministically instead of racing stop()
    *  against an in-flight readState()/listRecentIssues() that started just before it. */
   private currentPoll: Promise<void> = Promise.resolve();
+  /**
+   * Serializes every read-modify-write section against `statePath` through one in-process
+   * promise chain, so `poll()` and `markSeen()` — which can otherwise run concurrently, since
+   * `markSeen()` isn't gated by the `polling` flag — never interleave a read from one with a
+   * write from the other. The network fetch inside `poll()` deliberately stays OUTSIDE this
+   * lock (only the state file I/O needs serializing, not the whole poll cycle), so a slow
+   * `listRecentIssues()` doesn't block `markSeen()` from running and completing while it's in
+   * flight; `poll()` re-acquires the lock and re-reads state afterwards, before merging in what
+   * it fetched, so a `markSeen()` that ran during the fetch is never lost.
+   */
+  private lock: Promise<void> = Promise.resolve();
+
+  private withLock<T>(fn: () => Promise<T>): Promise<T> {
+    const result = this.lock.then(fn, fn);
+    this.lock = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
 
   constructor(o: LinearWatcherOptions<T>) {
     this.listRecentIssues = o.listRecentIssues;
@@ -102,9 +122,9 @@ export class LinearWatcher<T extends { id: string; createdAt: string }> {
    * (and may have partially acted) is worse than dropping one.
    */
   async poll(): Promise<number> {
-    const state = await this.readState();
+    const state = await this.withLock(() => this.readState());
     if (state === null) {
-      await this.writeState({ cursor: this.now().toISOString(), seen: [] });
+      await this.withLock(() => this.writeState({ cursor: this.now().toISOString(), seen: [] }));
       return 0;
     }
 
@@ -116,33 +136,41 @@ export class LinearWatcher<T extends { id: string; createdAt: string }> {
       return 0;
     }
 
-    const seen = new Set(state.seen);
-    const nextSeen = [...state.seen];
-    let cursor = state.cursor;
-    let notified = 0;
+    return this.withLock(async () => {
+      // Re-read inside the lock: a concurrent markSeen() may have written while the fetch above
+      // was in flight (which ran outside the lock). Merging against that fresh read — rather than
+      // the `state` read before the fetch — is what keeps its write from being lost.
+      const fresh = (await this.readState()) ?? state;
+      const seen = new Set(fresh.seen);
+      const nextSeen = [...fresh.seen];
+      let cursor = fresh.cursor;
+      let notified = 0;
 
-    for (const t of issues) {
-      if (t.createdAt > cursor) cursor = t.createdAt;
-      if (seen.has(t.id)) continue;
-      seen.add(t.id);
-      nextSeen.push(t.id);
-      try {
-        await this.onNew(t);
-        notified++;
-      } catch (err) {
-        this.log(`[linear-watcher] onNew failed for ${t.id}, marking it seen to avoid re-notifying: ${(err as Error).message}`);
+      for (const t of issues) {
+        if (t.createdAt > cursor) cursor = t.createdAt;
+        if (seen.has(t.id)) continue;
+        seen.add(t.id);
+        nextSeen.push(t.id);
+        try {
+          await this.onNew(t);
+          notified++;
+        } catch (err) {
+          this.log(`[linear-watcher] onNew failed for ${t.id}, marking it seen to avoid re-notifying: ${(err as Error).message}`);
+        }
       }
-    }
 
-    await this.writeState({ cursor, seen: nextSeen });
-    return notified;
+      await this.writeState({ cursor, seen: nextSeen });
+      return notified;
+    });
   }
 
   /** Marks an id as already handled without waiting for it to surface in a poll. */
   async markSeen(id: string): Promise<void> {
-    const state = (await this.readState()) ?? { cursor: this.now().toISOString(), seen: [] };
-    if (!state.seen.includes(id)) state.seen.push(id);
-    await this.writeState(state);
+    await this.withLock(async () => {
+      const state = (await this.readState()) ?? { cursor: this.now().toISOString(), seen: [] };
+      if (!state.seen.includes(id)) state.seen.push(id);
+      await this.writeState(state);
+    });
   }
 
   /** Starts polling on `intervalMs`. A poll already in flight is never overlapped by the next tick. */

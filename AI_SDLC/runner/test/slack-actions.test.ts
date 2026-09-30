@@ -3,7 +3,15 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { handleGateAction, parseSdlcCommand, isSlackStartupRejection, shouldBlockDoubleStart, type GateActionDeps } from "../src/slack/app.ts";
+import {
+  handleGateAction,
+  parseSdlcCommand,
+  isSlackStartupRejection,
+  shouldBlockDoubleStart,
+  handleSdlcCreate,
+  resolveSlackUserEmail,
+  type GateActionDeps,
+} from "../src/slack/app.ts";
 import { createSlackNotifier, type SlackClientLike } from "../src/slack/notifier.ts";
 import { RoleChecker } from "../src/slack/roles.ts";
 import { readThread, writeThread, type ThreadRecord } from "../src/slack/threads.ts";
@@ -404,6 +412,116 @@ test("notifier.gateWaiting: posts with reply_broadcast true", async () => {
 
   const gatePost = client.posted.find((p: any) => p.reply_broadcast === true);
   assert.ok(gatePost, "gateWaiting must post with reply_broadcast: true");
+});
+
+test("notifier.gateWaiting clears a stale gateResolvedBy for the stage so a second round's gateResolved (Linear) can update the message", async () => {
+  const runnerDir = await tmpRunnerDir();
+  const stateDir = join(runnerDir, ".state");
+  const client = fakeClient();
+  const notifier = createSlackNotifier({ client, channel: "C1", stateDir, roleGroups: {} });
+  const gateRef = { issueId: "gate-1", key: "GATE-1", url: "http://x/gate-1" };
+
+  // Round 1: gate opens, then gets resolved via the Slack button path — handleGateAction records
+  // gateResolvedBy BEFORE moving the Linear card, so by the time gateResolved fires it's a no-op.
+  await notifier.gateWaiting("ENG-7", "01-plan", "Product Owner", gateRef, "요약 1");
+  const afterRound1Open = await readThread(stateDir, "ENG-7");
+  afterRound1Open!.gateResolvedBy["01-plan"] = "U1";
+  await writeThread(stateDir, "ENG-7", afterRound1Open!);
+  await notifier.gateResolved("ENG-7", "01-plan", true);
+  const updatesAfterRound1 = client.updated.length;
+
+  // Round 2: the rework loop reuses the same stage id for the new gate wait. Without clearing
+  // gateResolvedBy, gateResolved below would see the stale round-1 marker and skip updating.
+  await notifier.gateWaiting("ENG-7", "01-plan", "Product Owner", gateRef, "요약 2");
+  const recAfterReopen = await readThread(stateDir, "ENG-7");
+  assert.equal(recAfterReopen?.gateResolvedBy["01-plan"], undefined, "gateWaiting must clear the stage's stale gateResolvedBy");
+
+  await notifier.gateResolved("ENG-7", "01-plan", true);
+  assert.ok(client.updated.length > updatesAfterRound1, "round 2's gateResolved (moved directly in Linear) must update the message");
+});
+
+// ── resolveSlackUserEmail / handleSdlcCreate ──────────────────────────────────
+
+test("resolveSlackUserEmail: returns the profile email on success", async () => {
+  const client = { users: { info: async (a: { user: string }) => ({ user: { profile: { email: `${a.user}@x.com` } } }) } };
+  assert.equal(await resolveSlackUserEmail(client, "U1"), "U1@x.com");
+});
+
+test("resolveSlackUserEmail: degrades silently (returns undefined, does not throw) when users.info fails", async () => {
+  const client = { users: { info: async () => { throw new Error("missing_scope"); } } };
+  await assert.doesNotReject(async () => {
+    const email = await resolveSlackUserEmail(client, "U1");
+    assert.equal(email, undefined);
+  });
+});
+
+test("handleSdlcCreate: resolves the inviting user's email and attaches it as the new ticket's creatorEmail", async () => {
+  const runnerDir = await tmpRunnerDir();
+  const source = fakeSource("started");
+  const notices: Array<{ t: any; state: string }> = [];
+  const setEmails: Array<[string, string]> = [];
+
+  const result = await handleSdlcCreate(
+    { title: "결제 버그", userId: "U1", userName: "alice" },
+    {
+      source,
+      notifier: { postTicketNotice: async (t: any, state: any) => { notices.push({ t, state }); } },
+      enqueue: () => 1,
+      resolveEmail: async () => "alice@example.com",
+      setRequesterEmail: (key, email) => setEmails.push([key, email]),
+      startMode: "button",
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(notices.length, 1);
+  assert.equal(notices[0].t.creatorEmail, "alice@example.com", "the posted notice's ticket must carry the resolved email");
+  assert.deepEqual(setEmails, [["ENG-99", "alice@example.com"]], "setRequesterEmail must be called so a later button-start still finds it");
+});
+
+test("handleSdlcCreate: degrades silently when email resolution fails — ticket is still created and announced", async () => {
+  const runnerDir = await tmpRunnerDir();
+  const source = fakeSource("started");
+  const notices: Array<{ t: any; state: string }> = [];
+
+  const result = await handleSdlcCreate(
+    { title: "결제 버그", userId: "U1", userName: "alice" },
+    {
+      source,
+      notifier: { postTicketNotice: async (t: any, state: any) => { notices.push({ t, state }); } },
+      enqueue: () => 1,
+      resolveEmail: async () => undefined,
+      startMode: "button",
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(notices.length, 1);
+  assert.equal(notices[0].t.creatorEmail, undefined);
+});
+
+test("handleSdlcCreate: startMode auto enqueues the ticket (with creatorEmail attached)", async () => {
+  const runnerDir = await tmpRunnerDir();
+  const source = fakeSource("started");
+  const enqueued: any[] = [];
+
+  const result = await handleSdlcCreate(
+    { title: "결제 버그", userId: "U1", userName: "alice" },
+    {
+      source,
+      notifier: { postTicketNotice: async () => {} },
+      enqueue: (t: any) => {
+        enqueued.push(t);
+        return 1;
+      },
+      resolveEmail: async () => "alice@example.com",
+      startMode: "auto",
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(enqueued.length, 1);
+  assert.equal(enqueued[0].creatorEmail, "alice@example.com");
 });
 
 // ── isSlackStartupRejection ──────────────────────────────────────────────────

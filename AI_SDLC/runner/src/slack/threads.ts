@@ -2,9 +2,10 @@
 // bot can find the right thread (and per-stage/gate message timestamps to edit)
 // across runner restarts. Plain fs I/O, no Slack API calls.
 
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { StageId } from "../gate.ts";
+import { writeJsonAtomic } from "../fs-atomic.ts";
 
 export interface ThreadRecord {
   channel: string;
@@ -31,7 +32,5 @@ export async function readThread(stateDir: string, key: string): Promise<ThreadR
 }
 
 export async function writeThread(stateDir: string, key: string, rec: ThreadRecord): Promise<void> {
-  const path = threadPath(stateDir, key);
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, JSON.stringify(rec, null, 2), "utf8");
+  await writeJsonAtomic(threadPath(stateDir, key), rec);
 }

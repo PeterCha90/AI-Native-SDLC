@@ -179,6 +179,66 @@ export function shouldBlockDoubleStart(key: string, isRunActive: (key: string) =
   return isRunActive(key);
 }
 
+// ── resolveSlackUserEmail / handleSdlcCreate ──────────────────────────────────
+
+/**
+ * Looks up a Slack user's email via `users.info` (scope `users:read.email`, already requested in
+ * the manifest). Degrades silently — returns `undefined` rather than throwing — on any failure
+ * (missing scope, rate limit, the user having no email on file): the interview loop already
+ * handles "no requester found" by mentioning nobody, which is a fine fallback here too.
+ */
+export async function resolveSlackUserEmail(
+  client: { users: { info(a: { user: string }): Promise<{ user?: { profile?: { email?: string } } }> } },
+  userId: string,
+): Promise<string | undefined> {
+  try {
+    const res = await client.users.info({ user: userId });
+    return res.user?.profile?.email;
+  } catch {
+    return undefined;
+  }
+}
+
+export interface HandleSdlcCreateDeps {
+  source: TicketSource;
+  notifier: { postTicketNotice: ReturnType<typeof createSlackNotifier>["postTicketNotice"] };
+  markTicketSeen?: (id: string) => Promise<void>;
+  /** Remembers the resolved email under the ticket's key, so a later "▶ 시작" click (which
+   *  re-fetches the ticket from the source and would otherwise lose it) can still find it. */
+  setRequesterEmail?: (key: string, email: string) => void;
+  enqueue: (t: Ticket) => number;
+  resolveEmail: (userId: string) => Promise<string | undefined>;
+  startMode: "button" | "auto";
+}
+
+/**
+ * The business logic behind `/sdlc <title>`, with no Bolt dependency so it's directly
+ * unit-testable (mirrors `handleGateAction`'s shape). A `/sdlc`-created ticket has no
+ * `creatorEmail` from the ticket source itself (Linear's own `creator` on a freshly-created issue
+ * is the API key's identity, not the Slack user who typed the command) — resolving the inviting
+ * user's email here is what lets the 01 Plan interview mention the right requester.
+ */
+export async function handleSdlcCreate(
+  a: { title: string; userId: string; userName: string },
+  d: HandleSdlcCreateDeps,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  try {
+    const ticket = await d.source.createTicket({ title: a.title, body: a.title });
+    const email = await d.resolveEmail(a.userId);
+    if (email) {
+      ticket.creatorEmail = email;
+      d.setRequesterEmail?.(ticket.key || ticket.id, email);
+    }
+    if (d.markTicketSeen) await d.markTicketSeen(ticket.id);
+    const state = d.startMode === "auto" ? "auto" : "new";
+    await d.notifier.postTicketNotice({ ...ticket, createdAt: new Date().toISOString(), creator: a.userName }, state);
+    if (state === "auto") d.enqueue(ticket);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, message: `티켓 생성 실패: ${(err as Error).message}` };
+  }
+}
+
 const HELP_TEXT = [
   "*AI-SDLC 사용법*",
   "`/sdlc <제목>` — 새 티켓을 만들고 알림을 게시한다",
@@ -209,6 +269,13 @@ export interface StartSlackAppOptions {
   markTicketSeen?: (id: string) => Promise<void>;
   /** The ticket's creator email, remembered by index.ts at enqueue time. Powers the 01 Plan interview's @mention. */
   getRequesterEmail: (key: string) => string | undefined;
+  /**
+   * Remembers a ticket key's requester email (index.ts wires this to the same map
+   * `getRequesterEmail` reads from). Used by the `/sdlc <title>` create path — see
+   * `handleSdlcCreate` — so a later "▶ 시작" click, which re-fetches the ticket from the source
+   * and would otherwise lose the Slack-resolved email, still finds it.
+   */
+  setRequesterEmail?: (key: string, email: string) => void;
 }
 
 async function updateGateMessage(
@@ -446,14 +513,20 @@ export async function startSlackApp(
         return;
       }
       case "create": {
-        try {
-          const ticket = await o.source.createTicket({ title: parsed.title, body: parsed.title });
-          if (o.markTicketSeen) await o.markTicketSeen(ticket.id);
-          const state = slackConfig.startMode === "auto" ? "auto" : "new";
-          await notifier.postTicketNotice({ ...ticket, createdAt: new Date().toISOString(), creator: command.user_name }, state);
-          if (state === "auto") o.enqueue(ticket);
-        } catch (err) {
-          await respond({ response_type: "ephemeral", text: `티켓 생성 실패: ${(err as Error).message}` });
+        const result = await handleSdlcCreate(
+          { title: parsed.title, userId: command.user_id, userName: command.user_name },
+          {
+            source: o.source,
+            notifier,
+            markTicketSeen: o.markTicketSeen,
+            setRequesterEmail: o.setRequesterEmail,
+            enqueue: o.enqueue,
+            resolveEmail: (userId) => resolveSlackUserEmail(cmdClient as unknown as { users: { info(a: { user: string }): Promise<{ user?: { profile?: { email?: string } } }> } }, userId),
+            startMode: slackConfig.startMode,
+          },
+        );
+        if (!result.ok) {
+          await respond({ response_type: "ephemeral", text: result.message });
         }
         return;
       }

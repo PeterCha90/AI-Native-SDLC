@@ -166,6 +166,19 @@ async function setupGates(
   const outPath = gateMapPath(runnerDir, key);
   await mkdir(join(runnerDir, ".state"), { recursive: true });
 
+  // `/sdlc run <키>` after an aborted run (or any restart) must not duplicate the six Linear gate
+  // sub-issues — reuse whatever 00-setup already wrote last time, and skip running the agent
+  // again, as long as the file on disk still parses as a valid gate map.
+  if (existsSync(outPath)) {
+    try {
+      const existing = await readGateMap(runnerDir, key);
+      console.log(`[gate:setup] 기존 게이트 재사용 (${outPath})`);
+      return existing;
+    } catch (err) {
+      console.warn(`[gate:setup] 기존 게이트 맵이 손상돼 새로 만든다: ${(err as Error).message}`);
+    }
+  }
+
   const stageLines = (Object.entries(config.gateRoles) as Array<[StageId, string]>)
     .map(([stage, role]) => `  - "${stage}": 제목 "[gate] ${stage} — 승인자: ${role}"`)
     .join("\n");
