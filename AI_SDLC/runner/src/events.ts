@@ -14,6 +14,14 @@ export interface PipelineEvents {
   gateResolved(key: string, stage: StageId, approved: boolean, reason?: string): Promise<void>;
   followupCreated(key: string, followup: { key: string; url: string }): Promise<void>;
   runFinished(key: string, outcome: "done" | "aborted"): Promise<void>;
+  /**
+   * Fired after a 01/02/03 gate rejection, right before the rework session starts. Optional:
+   * a notifier written before this feature existed doesn't need to implement it, and `safeEvents`
+   * only calls it when the wrapped notifier actually provides it.
+   */
+  stageReworking?(key: string, stage: StageId, attempt: number, maxAttempts: number, reason: string): Promise<void>;
+  /** Fired once a 01 Plan interview round's answers have been recorded, before the revise session starts. Optional, same reason as `stageReworking`. */
+  interviewAnswered?(key: string, round: number, answerCount: number): Promise<void>;
 }
 
 export const noopEvents: PipelineEvents = {
@@ -46,7 +54,7 @@ function safeCall<Args extends unknown[]>(
  * must never stop the pipeline — Linear cards stay the source of truth for approvals either way.
  */
 export function safeEvents(inner: PipelineEvents, log: (m: string) => void = console.error): PipelineEvents {
-  return {
+  const wrapped: PipelineEvents = {
     runStarted: safeCall("runStarted", inner.runStarted.bind(inner), log),
     stageStarted: safeCall("stageStarted", inner.stageStarted.bind(inner), log),
     stageFinished: safeCall("stageFinished", inner.stageFinished.bind(inner), log),
@@ -55,4 +63,13 @@ export function safeEvents(inner: PipelineEvents, log: (m: string) => void = con
     followupCreated: safeCall("followupCreated", inner.followupCreated.bind(inner), log),
     runFinished: safeCall("runFinished", inner.runFinished.bind(inner), log),
   };
+  // Optional methods: only wrapped (and therefore only ever called) when the notifier we're
+  // wrapping actually implements them. `pipeline.ts` always calls these through `?.()`.
+  if (inner.stageReworking) {
+    wrapped.stageReworking = safeCall("stageReworking", inner.stageReworking.bind(inner), log);
+  }
+  if (inner.interviewAnswered) {
+    wrapped.interviewAnswered = safeCall("interviewAnswered", inner.interviewAnswered.bind(inner), log);
+  }
+  return wrapped;
 }

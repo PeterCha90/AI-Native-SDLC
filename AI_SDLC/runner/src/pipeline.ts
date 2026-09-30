@@ -10,6 +10,7 @@ import { runE2E } from "./e2e.ts";
 import { awaitApproval, gateMapPath, readGateMap, type GateMap, type StageId } from "./gate.ts";
 import type { LiveStatus, RunMeta, StageLogEntry } from "./state.ts";
 import { noopEvents, safeEvents, type PipelineEvents } from "./events.ts";
+import { noInterview, parseOpenQuestions, type InterviewChannel } from "./interview.ts";
 
 const DEPTH_MARKER = /sdlc-depth:\s*(\d+)/i;
 
@@ -92,12 +93,13 @@ async function runAndLog(
   cwd: string,
   events: PipelineEvents,
   allowedTools?: string[],
+  resumeSessionId?: string,
 ): Promise<StageResult> {
   const startedAt = new Date().toISOString();
   await writeLive(runnerDir, key, { stage, phase: "running", since: startedAt });
   console.log(`[pipeline:${key}] ${stage} starting`);
   await events.stageStarted(key, stage);
-  const result = await runStage({ prompt, cwd, allowedTools, pluginDir: PLUGIN_DIR });
+  const result = await runStage({ prompt, cwd, allowedTools, pluginDir: PLUGIN_DIR, resumeSessionId });
   const endedAt = new Date().toISOString();
   await appendStateLog(runnerDir, key, {
     stage,
@@ -255,6 +257,7 @@ export async function runPipeline(
   source: TicketSource,
   runnerDir: string,
   events: PipelineEvents = noopEvents,
+  interview: InterviewChannel = noInterview,
 ): Promise<void> {
   const key = ticket.key || ticket.id;
   const repoRoot = config.repoPath;
@@ -298,11 +301,14 @@ export async function runPipeline(
 
   const gates = config.autoApprove ? null : await setupGates(runnerDir, key, ticket, config, workDir, ev);
 
-  /** Blocks on the human who owns this stage. Returns false if they rejected or the wait timed out. */
-  async function gate(stage: StageId, summary: string): Promise<boolean> {
+  /**
+   * Blocks on the human who owns this stage. `reason` is set when rejected — `gateWithRework`
+   * below is the only caller that reads it.
+   */
+  async function gate(stage: StageId, summary: string): Promise<{ approved: boolean; reason?: string }> {
     if (!gates) {
       console.log(`[gate:${stage}] SDLC_AUTO_APPROVE=1 — 게이트를 건너뛴다 (리허설 모드).`);
-      return true;
+      return { approved: true };
     }
     await writeLive(runnerDir, key, {
       stage: `gate:${stage}`,
@@ -331,7 +337,111 @@ export async function runPipeline(
       note: result.approved ? `${config.gateRoles[stage]} 승인` : `중단: ${result.reason}`,
     });
     await ev.gateResolved(key, stage, result.approved, result.reason);
-    return result.approved;
+    return { approved: result.approved, reason: result.reason };
+  }
+
+  const DOC_WRITE_TOOLS = ["Read", "Write", "Glob", "Grep", "Skill"];
+  const REWORKABLE_STAGES: readonly StageId[] = ["01-plan", "02-design", "03-build"];
+
+  /**
+   * Runs `stageLabel` with `resumeSessionId`, and if that resume attempt fails in a way that
+   * leaves no session transcript behind (`ok:false` and `sessionJsonlPath:null` — i.e. the
+   * `--resume` never produced a usable session), retries exactly once in a fresh session that
+   * carries the full existing artifact plus the same answers/reason inline. See §6 of the spec.
+   */
+  async function runStageOrFallback(
+    stageLabel: string,
+    prompt: string,
+    fallbackPrompt: string,
+    resumeSessionId: string | undefined,
+  ): Promise<StageResult> {
+    let result = await runAndLog(runnerDir, key, stageLabel, prompt, workDir, ev, DOC_WRITE_TOOLS, resumeSessionId);
+    if (!result.ok && result.sessionJsonlPath === null) {
+      result = await runAndLog(runnerDir, key, stageLabel, fallbackPrompt, workDir, ev, DOC_WRITE_TOOLS);
+    }
+    return result;
+  }
+
+  /**
+   * The 01 Plan interview loop (spec §3): reads `docsIntent`'s "## 미해결 질문" section, and
+   * while there are still open questions and we haven't hit `interviewMaxRounds`, asks
+   * `interview` and — on an answered round — resumes the intent session to revise the document
+   * and reparses. Stops (without asking again) the moment questions run out, or the channel
+   * returns anything other than an answered round. Returns the session id to resume from next
+   * (revised if any round ran, otherwise unchanged) — used both after the initial 01-intent run
+   * and again after a 01-plan rework.
+   */
+  async function runInterviewLoop(sessionId: string): Promise<string> {
+    const maxRounds = config.interviewMaxRounds;
+    let current = sessionId;
+    for (let round = 1; round <= maxRounds; round++) {
+      const content = existsSync(docsIntent) ? await readFile(docsIntent, "utf8") : "";
+      const questions = parseOpenQuestions(content);
+      if (questions.length === 0) break;
+
+      const outcome = await interview.ask(key, questions, round, maxRounds);
+      if (outcome.kind !== "answers" || outcome.answers.length === 0) break;
+
+      const answersList = outcome.answers.map((a) => `- ${a.user}: ${a.text}`).join("\n");
+      await source.comment(ticket.id, `01 Plan 인터뷰 답변 (round ${round}/${maxRounds}):\n\n${answersList}`).catch((err: Error) => {
+        console.error(`[pipeline:${key}] 인터뷰 답변을 원 티켓에 코멘트로 남기지 못했다 (계속한다): ${err.message}`);
+      });
+      await ev.interviewAnswered?.(key, round, outcome.answers.length);
+
+      const revisePrompt = `다음 답을 반영해 ${docsIntent} 를 고쳐라:\n\n${answersList}`;
+      const fallbackPrompt = `기존 산출물 전문:\n\n${content}\n\n${revisePrompt}`;
+      const reviseResult = await runStageOrFallback("01-intent-revise", revisePrompt, fallbackPrompt, current);
+      current = reviseResult.sessionId;
+    }
+    return current;
+  }
+
+  /**
+   * Wraps `gate()` for the three reworkable stages (01-plan, 02-design, 03-build — spec §4): on a
+   * rejection, while `attempt < reworkMaxAttempts`, runs `<stage>-rework` resuming the session
+   * that produced `artifactPath`, reopens the gate card as "unstarted", posts a "재작업 N/M"
+   * comment, and — for 01-plan only — runs the interview loop again before re-gating. Once
+   * `reworkMaxAttempts` reworks have all still been rejected, gives up like a non-reworkable gate.
+   */
+  async function gateWithRework(
+    stage: StageId,
+    artifactPath: string,
+    buildSummary: () => string,
+    sessionId: string,
+  ): Promise<{ approved: boolean; sessionId: string }> {
+    const maxAttempts = config.reworkMaxAttempts;
+    let attempt = 0;
+    let current = sessionId;
+    for (;;) {
+      const { approved, reason } = await gate(stage, buildSummary());
+      if (approved) return { approved: true, sessionId: current };
+      if (!REWORKABLE_STAGES.includes(stage) || attempt >= maxAttempts) {
+        return { approved: false, sessionId: current };
+      }
+
+      attempt++;
+      const effectiveReason = reason ?? "사유 없음";
+      await ev.stageReworking?.(key, stage, attempt, maxAttempts, effectiveReason);
+
+      const artifactContent = existsSync(artifactPath) ? await readFile(artifactPath, "utf8") : "";
+      const reworkPrompt = `반려 사유: ${effectiveReason}. 반영해 ${artifactPath} 를 고쳐라.`;
+      const fallbackPrompt = `기존 산출물 전문:\n\n${artifactContent}\n\n${reworkPrompt}`;
+      const reworkResult = await runStageOrFallback(`${stage}-rework`, reworkPrompt, fallbackPrompt, current);
+      current = reworkResult.sessionId;
+
+      if (gates) {
+        await source.setStateType(gates[stage].issueId, "unstarted").catch((err: Error) => {
+          console.error(`[gate:${stage}] 게이트 카드를 unstarted로 되돌리지 못했다 (계속한다): ${err.message}`);
+        });
+        await source.comment(gates[stage].issueId, `재작업 ${attempt}/${maxAttempts}`).catch((err: Error) => {
+          console.error(`[gate:${stage}] "재작업 ${attempt}/${maxAttempts}" 코멘트를 남기지 못했다 (계속한다): ${err.message}`);
+        });
+      }
+
+      if (stage === "01-plan") {
+        current = await runInterviewLoop(current);
+      }
+    }
   }
 
   // ── 01 Plan ─────────────────────────────────────────────────────────────────
@@ -343,9 +453,16 @@ export async function runPipeline(
       `티켓: ${ticket.title}\n\n${ticket.body}\n\n출처: ${ticket.url}`,
     workDir,
     ev,
-    ["Read", "Write", "Glob", "Grep", "Skill"],
+    DOC_WRITE_TOOLS,
   );
-  if (!(await gate("01-plan", `${artifactWarning(intentResult, docsIntent)}01 Plan 산출물: \`${docsIntent}\`\n\n문제/원하는 결과/영향 범위/제약/미해결 질문이 티켓 의도와 맞는지 확인해 달라.`))) {
+  const intentSessionId = await runInterviewLoop(intentResult.sessionId);
+  const plan01 = await gateWithRework(
+    "01-plan",
+    docsIntent,
+    () => `${artifactWarning(intentResult, docsIntent)}01 Plan 산출물: \`${docsIntent}\`\n\n문제/원하는 결과/영향 범위/제약/미해결 질문이 티켓 의도와 맞는지 확인해 달라.`,
+    intentSessionId,
+  );
+  if (!plan01.approved) {
     await writeLive(runnerDir, key, { stage: "01-plan", phase: "aborted", since: new Date().toISOString() });
     await ev.runFinished(key, "aborted");
     return;
@@ -359,9 +476,15 @@ export async function runPipeline(
     `sdlc-spec 스킬을 사용해 ${docsIntent} 를 읽고 ${docsSpec} 를 작성하라. 정책 충돌은 해당 설계 항목 바로 아래 인라인으로 표시하라.`,
     workDir,
     ev,
-    ["Read", "Write", "Glob", "Grep", "Skill"],
+    DOC_WRITE_TOOLS,
   );
-  if (!(await gate("02-design", `${artifactWarning(specResult, docsSpec)}02 Design 산출물: \`${docsSpec}\`\n\n"정책 충돌" 섹션을 각 정책 담당자와 정리한 뒤 진행 여부를 결정해 달라.`))) {
+  const design02 = await gateWithRework(
+    "02-design",
+    docsSpec,
+    () => `${artifactWarning(specResult, docsSpec)}02 Design 산출물: \`${docsSpec}\`\n\n"정책 충돌" 섹션을 각 정책 담당자와 정리한 뒤 진행 여부를 결정해 달라.`,
+    specResult.sessionId,
+  );
+  if (!design02.approved) {
     await writeLive(runnerDir, key, { stage: "02-design", phase: "aborted", since: new Date().toISOString() });
     await ev.runFinished(key, "aborted");
     return;
@@ -375,9 +498,15 @@ export async function runPipeline(
     `sdlc-plan 스킬을 사용해 ${docsSpec} 를 읽고 ${docsPlan} 를 작성하라. "무엇이 깨질 수 있는가" 심문을 반드시 포함하라. 코드는 아직 수정하지 마라.`,
     workDir,
     ev,
-    ["Read", "Write", "Glob", "Grep", "Skill"],
+    DOC_WRITE_TOOLS,
   );
-  if (!(await gate("03-build", `${artifactWarning(planResult, docsPlan)}03 Build 착수 계획: \`${docsPlan}\`\n\n변경할 파일 목록과 "무엇이 깨질 수 있는가"를 심문하고, 이대로 구현해도 되는지 판단해 달라.\n승인 후에만 에이전트가 코드를 편집한다.`))) {
+  const build03 = await gateWithRework(
+    "03-build",
+    docsPlan,
+    () => `${artifactWarning(planResult, docsPlan)}03 Build 착수 계획: \`${docsPlan}\`\n\n변경할 파일 목록과 "무엇이 깨질 수 있는가"를 심문하고, 이대로 구현해도 되는지 판단해 달라.\n승인 후에만 에이전트가 코드를 편집한다.`,
+    planResult.sessionId,
+  );
+  if (!build03.approved) {
     await writeLive(runnerDir, key, { stage: "03-build", phase: "aborted", since: new Date().toISOString() });
     await ev.runFinished(key, "aborted");
     return;
@@ -427,7 +556,7 @@ export async function runPipeline(
   // below, records why, and — if the detection tier warrants it — opens the follow-up ticket that
   // closes the loop. Gates 01–03 are different: rejecting those means the work itself was wrong,
   // so the pipeline returns and there is nothing to maintain.
-  const testApproved = await gate("04-test", `${testSummary}\n\n기계적 증거는 위에 붙였다. 의도와 리스크 관점에서 판단해 달라.`);
+  const testApproved = (await gate("04-test", `${testSummary}\n\n기계적 증거는 위에 붙였다. 의도와 리스크 관점에서 판단해 달라.`)).approved;
 
   // ── 05 Deploy ───────────────────────────────────────────────────────────────
   let deployOk = false;
@@ -473,10 +602,12 @@ export async function runPipeline(
   // Same rule as the 04 gate: the release manager declining is a decision about shipping, not a
   // reason to skip maintenance. Only ask when there is actually something to release.
   const releaseApproved = deployOk
-    ? await gate(
-        "05-deploy",
-        `${reviewNote}05 Deploy: PR 준비 완료.\n\n\`\`\`\n${deployOutput.slice(0, 1200)}\n\`\`\`\n\n프로덕션 게이트는 \`RELEASE_APPROVED=1\` 없이는 훅이 차단한다. 릴리스를 승인할지 판단해 달라.`,
-      )
+    ? (
+        await gate(
+          "05-deploy",
+          `${reviewNote}05 Deploy: PR 준비 완료.\n\n\`\`\`\n${deployOutput.slice(0, 1200)}\n\`\`\`\n\n프로덕션 게이트는 \`RELEASE_APPROVED=1\` 없이는 훅이 차단한다. 릴리스를 승인할지 판단해 달라.`,
+        )
+      ).approved
     : false;
 
   // ── 06 Maintain ─────────────────────────────────────────────────────────────
