@@ -128,11 +128,11 @@ claude plugin marketplace remove ai-sdlc
 /sdlc-init
 ```
 
-템플릿 네 개를 저장소 루트에 깔고, `package.json`·`Makefile`·`pyproject.toml`을 읽어 `CLAUDE.md`의 명령어 칸을 채운다. 이미 있는 파일은 덮어쓰지 않는다. 끝나면 만든 파일과 사람이 채워야 할 곳을 표로 보여 준다.
+템플릿 네 개를 깔고, `package.json`·`Makefile`·`pyproject.toml`을 읽어 `.claude/CLAUDE.md`의 명령어 칸을 채운다. SDLC용 `CLAUDE.md`는 루트가 아니라 `.claude/CLAUDE.md`에 둔다 — 루트의 팀 `CLAUDE.md`는 그대로 두고, Claude Code는 둘 다 읽는다. 이미 있는 파일은 덮어쓰지 않는다. 끝나면 만든 파일과 사람이 채워야 할 곳을 표로 보여 준다.
 
 | 파일 | 쓰는 단계 | 사람이 할 일 |
 | --- | --- | --- |
-| `CLAUDE.md` | 모든 단계 | **테스트 명령**이 맞는지 확인하고 컨벤션·아키텍처를 채운다. 04 Test와 `verify-before-done` hook이 이 명령으로 검증한다 |
+| `.claude/CLAUDE.md` | 모든 단계 | **테스트 명령**이 맞는지 확인하고 컨벤션·아키텍처를 채운다. 02~03 단계가 plan.md의 성공 기준을 쓸 때 이 명령을 쓰고, `verify-before-done` hook이 그 성공 기준을 실제로 돌렸는지 확인한다 |
 | `REVIEW.md` | 05 Deploy | 그대로 써도 된다. Important/Nit 기준과 nit 5건 상한이 들어 있다 |
 | `ops/bands.yaml` | 06 Maintain | 예시 지표가 들어 있다. 지표 이름, 기준선(`baseline`), 표준편차(`sigma`)를 내 서비스에 맞게 바꾼다 |
 | `ops/detect.sh` | 06 Maintain | 그대로 쓴다. `python3`와 `PyYAML`이 필요하다 |
@@ -140,7 +140,7 @@ claude plugin marketplace remove ai-sdlc
 내용을 확인했으면 커밋한다:
 
 ```bash
-git add CLAUDE.md REVIEW.md ops && git commit -m "chore: AI-SDLC 설정 추가"
+git add .claude/CLAUDE.md REVIEW.md ops && git commit -m "chore: AI-SDLC 설정 추가"
 ```
 
 `docs/intent/`, `docs/spec/`, `docs/plan/`은 파이프라인이 알아서 만든다. 자동 모드는 테스트 명령을 `package.json`의 `test` 스크립트, `Makefile`의 `test` 타깃, `pytest` 순으로 찾아 실행한다.
@@ -189,7 +189,7 @@ npx ai-sdlc-runner init
 | 순서 | 묻는 것 | 확인 방법 |
 | --- | --- | --- |
 | 1 | (자동) 지금 폴더가 git 저장소인지 | 저장소 루트를 스스로 찾는다 |
-| 2 | Slack 앱 있음 / 없음 | 없으면 매니페스트를 그 자리에 출력하고 앱 생성 페이지 URL을 안내한다 |
+| 2 | Slack 앱 있음 / 없음 | 없으면 다른 터미널에서 `npx ai-sdlc-runner manifest --open`을 돌리라고 안내만 하고, 앱을 만든 뒤 계속하면 된다 |
 | 3 | Slack 봇 토큰 (`xoxb-…`) | 가려진 입력. `auth.test`로 검증하고 워크스페이스·봇 이름을 보여 준다 |
 | 4 | Slack 앱 토큰 (`xapp-…`) | 가려진 입력. `apps.connections.open`으로 검증한다 |
 | 5 | Linear API 키 (`lin_api_…`) | 가려진 입력. 조회로 검증한 뒤 팀 목록에서 고른다 |
@@ -199,7 +199,7 @@ npx ai-sdlc-runner init
 | 9 | 저장소 템플릿 | `CLAUDE.md`·`REVIEW.md`·`ops/`가 없으면 설치할지 묻는다(`/sdlc-init`과 같은 파일) |
 | 10 | 저장 · 요약 | `config.json`·`credentials.json`을 저장하고 `doctor` 결과와 `npx ai-sdlc-runner start` 안내를 보여 준다 |
 
-토큰 형식이 서로 바뀌었으면(`xoxb-`↔`xapp-` 자리를 헷갈리는 흔한 실수) 접두어로 바로 알려 주고 그 단계만 다시 묻는다. 검증에 실패해도 그 단계만 재질문하고, Ctrl+C를 누르면 아무 파일도 쓰지 않는다.
+토큰 형식이 서로 바뀌었으면(`xoxb-`↔`xapp-` 자리를 헷갈리는 흔한 실수) 접두어로 바로 알려 주고 그 단계만 다시 묻는다. 검증에 실패해도 그 단계만 재질문한다(단계마다 최대 3번, 넘기면 아무것도 저장하지 않고 중단). Ctrl+C를 눌러도 마찬가지로 아무 파일도 쓰지 않는다.
 
 토큰은 각각 여기서 발급받는다:
 
@@ -213,22 +213,22 @@ npx ai-sdlc-runner init
 
 ```
 ~/.ai-sdlc/
-└── repos/<저장소 경로 해시>/
+└── repos/<저장소 폴더 이름>-<경로 해시 10자>/
     ├── config.json          비밀 아닌 설정 (channelId, linearTeamId, gateRoles ...)
     ├── credentials.json     토큰. 파일 권한 600, 폴더 권한 700
-    ├── state/               단계별 세션 기록
-    └── worktrees/           티켓마다 만드는 작업 트리
+    ├── .state/              단계별 세션 기록
+    └── .worktrees/          티켓마다 만드는 작업 트리
 ```
 
 우선순위는 **환경변수 > `credentials.json`/`config.json` > 기본값**이다 — `SLACK_BOT_TOKEN`처럼 환경변수를 지정해 두면 저장된 토큰보다 그게 먼저 쓰인다. 기본 위치는 `~/.ai-sdlc`이고 `--home <dir>` 또는 `AI_SDLC_HOME` 환경변수로 바꿀 수 있다. 여러 저장소를 쓰면 저장소마다 `--repo <path>`(기본은 현재 폴더)로 `init`을 한 번씩 해 둔다.
 
-서버·CI라 대화형으로 못 묻는 경우엔 `init --yes`를 쓴다. `SLACK_BOT_TOKEN` 등 환경변수와 `--channel`, `--team` 플래그로 같은 검증을 거쳐 저장한다.
+서버·CI라 대화형으로 못 묻는 경우엔 `init --yes`를 쓴다. `SLACK_BOT_TOKEN` 등 환경변수와 `--channel`, `--team` 플래그를 받아 토큰과 채널을 검증하고 저장한다.
 
 ### 명령
 
 | 명령 | 하는 일 |
 | --- | --- |
-| `doctor` | 기동 전 점검을 표로: Node 버전, `claude` 설치·로그인, Linear MCP 연결, 토큰 3개 유효성, 봇의 채널 참여, 저장소 git 여부, 템플릿 파일 유무, `ego-browser` 준비 여부 |
+| `doctor` | 기동 전 점검을 표로: Node 버전, `claude` 설치·로그인, Linear MCP 연결, 토큰 3개 유효성, 저장소 git 여부, 템플릿 파일 유무, `ego-browser` 준비 여부(채널에 봇이 있는지는 `init` 6단계에서만 확인한다) |
 | `manifest [--open]` | Slack 앱 매니페스트 YAML을 출력한다. `--open`이면 앱 생성 페이지도 연다 |
 | `config` | 현재 설정을 출력한다(토큰은 앞 8자만 보인다) |
 
@@ -267,7 +267,7 @@ npx ai-sdlc-runner start
 
 ### ① 앱 만들기·설정
 
-Slack 앱을 아직 안 만들었어도 저장소를 옮겨 다닐 필요 없다 — 3-B의 `npx ai-sdlc-runner init`이 다 물어본다: 앱이 없다고 답하면 매니페스트와 생성 페이지 링크를 보여 주고, 봇 토큰·앱 토큰·채널·승인 역할까지 그 자리에서 검증하며 받는다(순서와 각 단계는 [3-B의 표](#3-b-자동으로-돌리기-러너) 참고). 채널 초대(`/invite @AI-SDLC`)와 사용자 그룹 만들기만 Slack 쪽에서 미리 해 두면 된다.
+Slack 앱을 아직 안 만들었어도 저장소를 옮겨 다닐 필요 없다 — 3-B의 `npx ai-sdlc-runner init`이 다 물어본다: 앱이 없다고 답하면 다른 터미널에서 `npx ai-sdlc-runner manifest --open`을 돌리라고 안내하고(매니페스트를 그 자리에서 보여 주지는 않는다), 앱을 만들고 돌아오면 봇 토큰·앱 토큰·채널·승인 역할까지 그 자리에서 검증하며 받는다(순서와 각 단계는 [3-B의 표](#3-b-자동으로-돌리기-러너) 참고). 채널 초대(`/invite @AI-SDLC`)와 사용자 그룹 만들기만 Slack 쪽에서 미리 해 두면 된다.
 
 ### ② 실행
 
@@ -401,7 +401,7 @@ Linear → Settings → API → Webhooks에서 `<터널 주소>/webhook/linear`�
 
 ## 설정
 
-토큰·채널·팀·시작 방식은 `npx ai-sdlc-runner init`이 묻고 저장한다(3-B). 아래 값들은 그보다 세부적인 파이프라인 튜닝값이라 `init`이 묻지 않는다 — 직접 파일을 연다. `npx ai-sdlc-runner config`로 지금 쓰는 파일 위치를 확인할 수 있다(npx로 설치했으면 `~/.ai-sdlc/repos/<저장소 경로 해시>/config.json`, 소스에서 `npm start`로 돌리면 `runner/sdlc.config.json`).
+토큰·채널·팀·시작 방식은 `npx ai-sdlc-runner init`이 묻고 저장한다(3-B). 아래 값들은 그보다 세부적인 파이프라인 튜닝값이라 `init`이 묻지 않는다 — 직접 파일을 연다. `npx ai-sdlc-runner config`로 지금 쓰는 파일 위치를 확인할 수 있다(npx로 설치했으면 `~/.ai-sdlc/repos/<저장소 폴더 이름>-<해시 10자>/config.json`, 소스에서 `npm start`로 돌리면 `runner/sdlc.config.json`).
 
 | 설정 | 기본값 | 설명 |
 | --- | --- | --- |
@@ -439,7 +439,7 @@ Linear → Settings → API → Webhooks에서 `<터널 주소>/webhook/linear`�
 | 스킬이 목록에 안 나온다 | `claude plugin list`에 `ai-native-sdlc@ai-sdlc`가 있는지 확인하고, 설치 뒤 Claude Code를 다시 시작한다. `project`/`local` 범위로 설치했다면 그 저장소 안에서만 보인다 |
 | `marketplace add`가 저장소를 못 찾는다 | 저장소가 비공개면 접근 권한이 있는 GitHub 계정으로 git 인증이 돼 있어야 한다 (`gh auth status`) |
 | 04 Test의 e2e가 매번 실패하고 06이 후속 티켓을 계속 만든다 | e2e는 `ego-browser`로 `demoAppUrl`을 연다. `printf 'cliLog("ok")\n' \| ego-browser nodejs 2>&1`이 `ok`를 출력하는지, 앱이 그 주소에 떠 있는지 확인한다. 자동 티켓은 깊이 3에서 멈춘다 |
-| 뭐가 문제인지 모르겠다 | `npx ai-sdlc-runner doctor`로 Node 버전, `claude` 설치·로그인, Linear MCP 연결, 토큰 3개, 봇의 채널 참여, 저장소 git 여부, 템플릿 파일, `ego-browser` 준비를 한 번에 확인한다 |
+| 뭐가 문제인지 모르겠다 | `npx ai-sdlc-runner doctor`로 Node 버전, `claude` 설치·로그인, Linear MCP 연결, 토큰 3개, 저장소 git 여부, 템플릿 파일, `ego-browser` 준비를 한 번에 확인한다(봇이 채널에 있는지는 `init`에서만 확인한다) |
 | `npx ai-sdlc-runner start`가 "먼저 init"이라며 종료한다 | 그 저장소에서 `npx ai-sdlc-runner init`을 아직 안 한 것이다. 설정은 `--repo`(기본 현재 폴더)별로 따로 저장된다 |
 | `start`가 토큰 검증 실패로 종료한다 | 어떤 토큰인지 메시지에 나온다. 토큰이 만료·폐기됐으면 `npx ai-sdlc-runner init`을 다시 돌려 그 토큰만 바꾼다 |
 | `npm start`(소스 실행)가 바로 종료된다 | 출력된 `[config]` 메시지대로 `LINEAR_API_KEY`, `LINEAR_WEBHOOK_SECRET`, `linearTeamId`를 채운다(개발자용 절 참고) |
@@ -463,7 +463,7 @@ AI_SDLC/
 │   ├── hooks/                        # 위 표의 hook 8개 + hooks.json
 │   ├── agents/                       # verifier, e2e-reviewer
 │   ├── commands/                     # /sdlc-init, /sdlc-run, /sdlc-status
-│   └── templates/                    # /sdlc-init이 까는 CLAUDE.md·REVIEW.md·ops/ 템플릿
+│   └── templates/                    # /sdlc-init이 까는 .claude/CLAUDE.md·REVIEW.md·ops/ 템플릿
 ├── runner/                           # 자동 모드 러너 (webhook, 게이트, Slack 봇)
 │   ├── slack/manifest.yaml           # Slack 앱 매니페스트
 │   ├── src/slack/                    # Bolt 앱, 역할 확인, 메시지, 알림

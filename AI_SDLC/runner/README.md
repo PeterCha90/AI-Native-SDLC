@@ -56,7 +56,7 @@ Other commands:
 
 | Command | Does |
 | --- | --- |
-| `doctor` | Pre-flight checks as a table: Node version, `claude` installed/logged in, Linear MCP connected, the three tokens, bot channel membership, target repo is git, template files present, `ego-browser` readiness. |
+| `doctor` | Pre-flight checks as a table: Node version, `claude` installed/logged in, Linear MCP connected, the three tokens, target repo is git, template files present, `ego-browser` readiness. (Bot channel membership is only checked during `init`, not `doctor`.) |
 | `manifest [--open]` | Prints the Slack app manifest YAML; `--open` also opens the app-creation page. |
 | `config` | Prints the current settings (tokens masked to their first 8 characters). |
 
@@ -89,21 +89,23 @@ itself stays a manual step for whoever owns the npm account.
 
 ```
 ~/.ai-sdlc/
-└── repos/<repo path hash>/
+└── repos/<repo folder name>-<10-char hash>/
     ├── config.json        non-secret settings
     ├── credentials.json   tokens, 600 permissions (700 on the folder)
-    ├── state/             per-stage session records (was runner/.state)
-    └── worktrees/         per-ticket worktrees (was runner/.worktrees)
+    ├── .state/            per-stage session records
+    └── .worktrees/        per-ticket worktrees
 ```
 
-One directory per repo, so a single person can run the CLI against several
-repos without their state colliding. Precedence is **env var >
-`credentials.json`/`config.json` > default**. Default home is `~/.ai-sdlc`;
-override with `--home <dir>` or `AI_SDLC_HOME`, and point at a different repo
-with `--repo <path>` (default: current directory). Running from source inside
-`AI_SDLC/runner/` with `npm start` keeps using `runner/sdlc.config.json` and
-`runner/.state`/`runner/.worktrees` exactly as before (or whatever
-`SDLC_CONFIG_PATH` points at) — the dev workflow below doesn't change.
+Same dot-folder names the runner has always used (`.state/`, `.worktrees/`) —
+only the parent directory changes. One directory per repo, so a single person
+can run the CLI against several repos without their state colliding.
+Precedence is **env var > `credentials.json`/`config.json` > default**.
+Default home is `~/.ai-sdlc`; override with `--home <dir>` or `AI_SDLC_HOME`,
+and point at a different repo with `--repo <path>` (default: current
+directory). Running from source inside `AI_SDLC/runner/` with `npm start`
+keeps using `runner/sdlc.config.json` and `runner/.state`/`runner/.worktrees`
+exactly as before (or whatever `SDLC_CONFIG_PATH` points at) — the dev
+workflow below doesn't change.
 
 ## Run from source
 
@@ -208,8 +210,8 @@ with its transcript path (`sessionJsonlPath`), and every run also keeps a
 `<key>.meta.json` (ticket, labels, depth, gate roles) and a live
 `<key>.live.json` snapshot (`{ stage, phase, role?, gateUrl?, since }`). The
 state dir is `AI_SDLC/runner/.state/` when running from source, or
-`~/.ai-sdlc/repos/<repo path hash>/state/` when installed via `npx
-ai-sdlc-runner` (see "File locations" above). These are read by
+`~/.ai-sdlc/repos/<repo folder name>-<10-char hash>/.state/` when installed
+via `npx ai-sdlc-runner` (see "File locations" above). These are read by
 `/sdlc-status` and by the Slack notifier. The HTTP server only exposes
 `GET /health` and `POST /webhook/<source>` — progress is the Linear gate
 sub-issues plus (if Slack is on) the ticket's Slack thread.
