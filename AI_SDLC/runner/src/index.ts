@@ -8,7 +8,7 @@ import { runPipeline } from "./pipeline.ts";
 import { sessionsDirFor } from "./claude.ts";
 import { noopEvents, safeEvents, type PipelineEvents } from "./events.ts";
 import { LinearWatcher } from "./linear-watcher.ts";
-import { startSlackApp } from "./slack/app.ts";
+import { startSlackApp, isSlackStartupRejection } from "./slack/app.ts";
 import type { createSlackNotifier } from "./slack/notifier.ts";
 
 const RUNNER_DIR = dirname(fileURLToPath(import.meta.url)).replace(/\/src$/, "");
@@ -65,23 +65,30 @@ class Queue {
   }
 }
 
-// A bad SLACK_BOT_TOKEN/SLACK_APP_TOKEN combination can reject an internal promise deep inside
-// @slack/bolt's Socket Mode client (its `apps.connections.open` retry path) in a way that never
-// reaches the `try/catch` around `startSlackApp()` below — Node's default behaviour for that is
-// to crash the whole process. That's exactly the one failure this whole feature must never cause
-// (see the design doc's error-handling table: a dead Slack connection must never take down the
-// webhook path). Logging and continuing here is deliberate, not a blanket "ignore all errors":
-// every code path we control already has its own try/catch; this is a last-resort net for the
-// ones we don't.
-process.on("unhandledRejection", (reason) => {
-  console.error("[ai-sdlc-runner] unhandled rejection (continuing):", reason);
-});
-
 export function startServer(): void {
   const config = loadConfig();
   const source = createTicketSource(config);
   const queue = new Queue();
   const stateDir = join(RUNNER_DIR, ".state");
+
+  // A bad SLACK_BOT_TOKEN/SLACK_APP_TOKEN combination can reject an internal promise deep
+  // inside @slack/bolt's Socket Mode client in a way that never reaches the `try/catch` around
+  // `startSlackApp()` below (see `isSlackStartupRejection`'s docstring for the trace). Only
+  // registered when Slack is actually configured, and only swallows rejections this predicate
+  // recognises as Slack/Bolt in origin — anything else still crashes the process loudly
+  // (`process.exitCode = 1` then rethrow), so a real bug in the pipeline or webhook path is
+  // never silently masked by this net.
+  if (config.slack) {
+    process.on("unhandledRejection", (reason) => {
+      if (isSlackStartupRejection(reason)) {
+        console.error("[ai-sdlc-runner] unhandled Slack/Bolt rejection (continuing):", reason);
+        return;
+      }
+      console.error("[ai-sdlc-runner] unhandled rejection (not Slack-related) — crashing:", reason);
+      process.exitCode = 1;
+      throw reason instanceof Error ? reason : new Error(String(reason));
+    });
+  }
 
   // Which keys currently have a live `runPipeline` call in flight (as opposed to merely having
   // `.state/*` files on disk from a run the runner no longer remembers — see gate.ts's
@@ -118,13 +125,23 @@ export function startServer(): void {
       events = safeEvents(notifier);
     }
 
-    if (config.linearTrigger === "poll") {
+    if (config.linearTrigger === "poll" && !config.slack) {
+      // Reachable only via an explicit `linearTrigger: "poll"` override in sdlc.config.json with
+      // no Slack tokens/channel set — poll notices have nowhere to go, so there's no point
+      // paying for the polling at all. Chose "warn loudly and don't start the watcher" over
+      // "start it anyway and warn": a watcher that silently no-ops on every new ticket forever
+      // is a worse failure mode than one that never starts.
+      console.warn(
+        "[ai-sdlc-runner] linearTrigger가 poll이지만 Slack이 꺼져 있다 — poll 알림을 보낼 곳이 없어 LinearWatcher를 시작하지 않는다. " +
+          "linearTrigger를 webhook으로 두거나, SLACK_BOT_TOKEN/SLACK_APP_TOKEN과 slack.channelId로 Slack을 켜라.",
+      );
+    } else if (config.linearTrigger === "poll") {
       watcher = new LinearWatcher<RecentIssue>({
         listRecentIssues: (since) => source.listRecentIssues(since),
         statePath: join(stateDir, "linear-watch.json"),
         intervalMs: config.linearPollIntervalMs,
         onNew: async (t) => {
-          if (!slackNotifier) return; // poll trigger with no Slack has nowhere to announce a new ticket
+          if (!slackNotifier) return; // Slack configured but not yet connected (or failed to connect) — nothing to post to yet
           const startMode = config.slack?.startMode ?? "button";
           await slackNotifier.postTicketNotice(t, startMode === "auto" ? "auto" : "new");
           if (startMode === "auto") queue.enqueue(() => runTicket(t));

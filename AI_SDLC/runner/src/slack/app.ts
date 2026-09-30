@@ -16,6 +16,43 @@ import { readThread, writeThread } from "./threads.ts";
 import { ACTIONS, REJECT_MODAL, ticketNotice, gateMessage, rejectModal, type ActionValue } from "./blocks.ts";
 import { createSlackNotifier, type SlackClientLike } from "./notifier.ts";
 
+// ── isSlackStartupRejection ──────────────────────────────────────────────────
+
+/**
+ * Identifies whether an unhandled rejection originated from Slack/Bolt/socket-mode, as opposed
+ * to an unrelated bug elsewhere in the runner (a pipeline stage, the webhook handler, etc.).
+ *
+ * This exists because a bad SLACK_BOT_TOKEN/SLACK_APP_TOKEN can reject a promise deep inside
+ * `@slack/bolt`'s Socket Mode client (its `apps.connections.open` call, in
+ * `@slack/socket-mode`'s `retrieveWSSURL`) in a way that never reaches the `try/catch` around
+ * `app.start()` in `startSlackApp` below — traced as far as: `invalid_auth` (and the other
+ * `UnrecoverableSocketModeStartError` codes) short-circuits socket-mode's own retry loop and
+ * throws, but the resulting rejection still surfaces as a process-level unhandled rejection
+ * rather than through our `await`. index.ts registers a narrow `unhandledRejection` handler
+ * (only when `config.slack` is set) that uses this predicate to swallow exactly that class of
+ * failure and nothing else — a real bug anywhere else in the runner must still crash loudly.
+ *
+ * Kept pure and exported (no Slack SDK import) so the matching logic is unit-testable without
+ * a live Slack connection.
+ */
+export function isSlackStartupRejection(reason: unknown): boolean {
+  if (!(reason instanceof Error)) return false;
+
+  const constructorName = reason.constructor?.name ?? "";
+  // @slack/web-api's own error classes: WebAPIPlatformError, WebAPIRequestError,
+  // WebAPIHTTPError, WebAPIRateLimitedError.
+  if (constructorName.startsWith("WebAPI")) return true;
+
+  const data = (reason as { data?: { error?: string } }).data;
+  const UNRECOVERABLE_SOCKET_MODE_ERRORS = ["not_authed", "invalid_auth", "account_inactive", "user_removed_from_team", "team_disabled"];
+  if (data?.error && UNRECOVERABLE_SOCKET_MODE_ERRORS.includes(data.error)) return true;
+
+  // Fallback: the error's own stack trace runs through an `@slack/*` package.
+  if (/node_modules\/@slack\//.test(reason.stack ?? "")) return true;
+
+  return false;
+}
+
 // ── handleGateAction ─────────────────────────────────────────────────────────
 
 export interface GateActionDeps {
@@ -29,10 +66,20 @@ export interface GateActionDeps {
 
 export type GateActionResult = { ok: true; note?: string } | { ok: false; message: string };
 
+// Guards against two near-simultaneous button presses (or a button press racing a modal
+// submission) on the same gate both passing the "still pending" check and both commenting +
+// moving the Linear card. Keyed by "<key>:<stage>", held for the whole function body (acquired
+// synchronously before the first `await`, so two calls fired back-to-back in the same tick can
+// never both see it unheld), released in `finally`. In-memory only — fine, since this is
+// process-local contention between two Slack clicks arriving within the same runner process,
+// not a durability concern (the Linear card state is still the source of truth).
+const inFlightGates = new Set<string>();
+
 /**
  * The business logic behind the Slack ✅/⛔ buttons, with no Slack SDK dependency so it's
  * directly unit-testable. Order matters and is load-bearing (see the Task 6 brief):
  *
+ * 0. in-flight lock for this (key, stage) — see `inFlightGates` above
  * 1. role check (no Linear call at all if the clicker isn't allowed to act)
  * 2. read the gate map
  * 3. confirm the gate is still pending (an already-resolved gate is a no-op, not an error)
@@ -46,54 +93,63 @@ export async function handleGateAction(
   a: { userId: string; key: string; stage: StageId; approved: boolean; reason?: string },
   d: GateActionDeps,
 ): Promise<GateActionResult> {
-  const role = d.gateRoles[a.stage];
-  const canAct = await d.roles.canAct(role, a.userId);
-  if (!canAct.ok) {
-    if (canAct.error) return { ok: false, message: `역할 확인에 실패했다: ${canAct.error}` };
-    return { ok: false, message: `이 게이트는 <!subteam^${canAct.groupId}> 만 승인할 수 있다.` };
+  const lockKey = `${a.key}:${a.stage}`;
+  if (inFlightGates.has(lockKey)) {
+    return { ok: false, message: "이미 처리 중이다" };
   }
-
-  let gates;
+  inFlightGates.add(lockKey);
   try {
-    gates = await readGateMap(d.runnerDir, a.key);
-  } catch (err) {
-    return { ok: false, message: `게이트 정보를 찾을 수 없다: ${(err as Error).message}` };
-  }
-  const gate = gates[a.stage];
-
-  let stateType;
-  try {
-    stateType = await d.source.getStateType(gate.issueId);
-  } catch (err) {
-    return { ok: false, message: `상태 조회에 실패했다: ${(err as Error).message}` };
-  }
-  const verdict = classifyState(stateType);
-  if (verdict === "approved") return { ok: false, message: "이미 승인됨" };
-  if (verdict === "rejected") return { ok: false, message: "이미 반려됨" };
-
-  // Recorded before the card moves — see the docstring above.
-  const rec = await readThread(d.stateDir, a.key);
-  if (rec) {
-    rec.gateResolvedBy[a.stage] = a.userId;
-    await writeThread(d.stateDir, a.key, rec);
-  }
-
-  try {
-    if (a.approved) {
-      await d.source.comment(gate.issueId, `Slack에서 <@${a.userId}> 승인`);
-      await d.source.setStateType(gate.issueId, "completed");
-    } else {
-      await d.source.comment(gate.issueId, a.reason ?? "사유 없음");
-      await d.source.setStateType(gate.issueId, "canceled");
+    const role = d.gateRoles[a.stage];
+    const canAct = await d.roles.canAct(role, a.userId);
+    if (!canAct.ok) {
+      if (canAct.error) return { ok: false, message: `역할 확인에 실패했다: ${canAct.error}` };
+      return { ok: false, message: `이 게이트는 <!subteam^${canAct.groupId}> 만 승인할 수 있다.` };
     }
-  } catch (err) {
-    return { ok: false, message: `처리에 실패했다: ${(err as Error).message}` };
-  }
 
-  if (!d.isRunActive(a.key)) {
-    return { ok: true, note: `러너 재시작으로 이 실행은 중단됐다. /sdlc run ${a.key} 로 다시 시작한다.` };
+    let gates;
+    try {
+      gates = await readGateMap(d.runnerDir, a.key);
+    } catch (err) {
+      return { ok: false, message: `게이트 정보를 찾을 수 없다: ${(err as Error).message}` };
+    }
+    const gate = gates[a.stage];
+
+    let stateType;
+    try {
+      stateType = await d.source.getStateType(gate.issueId);
+    } catch (err) {
+      return { ok: false, message: `상태 조회에 실패했다: ${(err as Error).message}` };
+    }
+    const verdict = classifyState(stateType);
+    if (verdict === "approved") return { ok: false, message: "이미 승인됨" };
+    if (verdict === "rejected") return { ok: false, message: "이미 반려됨" };
+
+    // Recorded before the card moves — see the docstring above.
+    const rec = await readThread(d.stateDir, a.key);
+    if (rec) {
+      rec.gateResolvedBy[a.stage] = a.userId;
+      await writeThread(d.stateDir, a.key, rec);
+    }
+
+    try {
+      if (a.approved) {
+        await d.source.comment(gate.issueId, `Slack에서 <@${a.userId}> 승인`);
+        await d.source.setStateType(gate.issueId, "completed");
+      } else {
+        await d.source.comment(gate.issueId, a.reason ?? "사유 없음");
+        await d.source.setStateType(gate.issueId, "canceled");
+      }
+    } catch (err) {
+      return { ok: false, message: `처리에 실패했다: ${(err as Error).message}` };
+    }
+
+    if (!d.isRunActive(a.key)) {
+      return { ok: true, note: `러너 재시작으로 이 실행은 중단됐다. /sdlc run ${a.key} 로 다시 시작한다.` };
+    }
+    return { ok: true };
+  } finally {
+    inFlightGates.delete(lockKey);
   }
-  return { ok: true };
 }
 
 // ── parseSdlcCommand ─────────────────────────────────────────────────────────
@@ -107,6 +163,15 @@ export function parseSdlcCommand(text: string): SdlcCommand {
   const runMatch = trimmed.match(/^run\s+(\S+)$/i);
   if (runMatch) return { kind: "run", key: runMatch[1] };
   return { kind: "create", title: trimmed };
+}
+
+/**
+ * Pure predicate behind the "▶ 시작" button's double-click guard: block when this key was
+ * already marked started by a previous click, or when its pipeline run is already active.
+ * Exported (and kept trivial) so it's cheaply unit-testable without standing up a Bolt app.
+ */
+export function shouldBlockDoubleStart(key: string, startedKeys: ReadonlySet<string>, isRunActive: (key: string) => boolean): boolean {
+  return startedKeys.has(key) || isRunActive(key);
 }
 
 const HELP_TEXT = [
@@ -196,11 +261,21 @@ export async function startSlackApp(
     gateRoles: o.config.gateRoles,
   };
 
+  // Keys whose "▶ 시작" click (or `/sdlc run`) has already been accepted — guards a double click
+  // that arrives before the first click's own message update (or queue position) lands. See
+  // `shouldBlockDoubleStart`.
+  const startedKeys = new Set<string>();
+
   app.action(ACTIONS.start, async ({ ack, body, client: actionClient }) => {
     await ack();
     const b = body as any;
     const value: ActionValue = JSON.parse(b.actions[0].value);
     const userId: string = b.user.id;
+    if (shouldBlockDoubleStart(value.key, startedKeys, o.isRunActive)) {
+      await actionClient.chat.postEphemeral({ channel: b.channel.id, user: userId, text: "이미 시작됨" });
+      return;
+    }
+    startedKeys.add(value.key);
     try {
       const ticket = await o.source.getTicket(value.key);
       await notifier.markStarted(value.key, userId);
@@ -216,6 +291,7 @@ export async function startSlackApp(
         }
       }
     } catch (err) {
+      startedKeys.delete(value.key); // let the operator retry after a real failure
       await actionClient.chat.postEphemeral({ channel: b.channel.id, user: userId, text: `시작 실패: ${(err as Error).message}` });
     }
   });
@@ -296,6 +372,11 @@ export async function startSlackApp(
         return;
       }
       case "run": {
+        if (shouldBlockDoubleStart(parsed.key, startedKeys, o.isRunActive)) {
+          await respond({ response_type: "ephemeral", text: "이미 시작됨" });
+          return;
+        }
+        startedKeys.add(parsed.key);
         try {
           const ticket = await o.source.getTicket(parsed.key);
           await notifier.markStarted(ticket.key, command.user_id);
@@ -304,6 +385,7 @@ export async function startSlackApp(
             await respond({ response_type: "ephemeral", text: `대기열 ${position}번째 — 앞선 실행이 끝나면 시작한다` });
           }
         } catch (err) {
+          startedKeys.delete(parsed.key);
           await respond({ response_type: "ephemeral", text: `시작 실패: ${(err as Error).message}` });
         }
         return;

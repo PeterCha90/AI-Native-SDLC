@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { handleGateAction, parseSdlcCommand, type GateActionDeps } from "../src/slack/app.ts";
+import { handleGateAction, parseSdlcCommand, isSlackStartupRejection, shouldBlockDoubleStart, type GateActionDeps } from "../src/slack/app.ts";
 import { createSlackNotifier, type SlackClientLike } from "../src/slack/notifier.ts";
 import { RoleChecker } from "../src/slack/roles.ts";
 import { readThread, writeThread, type ThreadRecord } from "../src/slack/threads.ts";
@@ -32,7 +32,7 @@ interface FakeSource extends TicketSource {
 
 function fakeSource(stateType: StateType = "started"): FakeSource {
   const calls: string[] = [];
-  return {
+  const src: FakeSource = {
     calls,
     stateType,
     name: "fake",
@@ -52,13 +52,16 @@ function fakeSource(stateType: StateType = "started"): FakeSource {
     createSubIssue: async () => {
       throw new Error("not used");
     },
-    getStateType: async function (this: FakeSource): Promise<StateType> {
+    getStateType: async (): Promise<StateType> => {
       calls.push("getStateType");
-      return this.stateType;
+      return src.stateType;
     },
     listComments: async (): Promise<IssueComment[]> => [],
+    // Mutates the fake's own state, like a real adapter would — lets a test call
+    // handleGateAction twice in sequence and see the second call observe the first's effect.
     setStateType: async (issueId: string, type: "completed" | "canceled") => {
       calls.push(`setStateType:${issueId}:${type}`);
+      src.stateType = type;
     },
     listRecentIssues: async () => [],
     getTicket: async (idOrKey: string): Promise<Ticket> => ({
@@ -70,6 +73,7 @@ function fakeSource(stateType: StateType = "started"): FakeSource {
       url: `http://x/${idOrKey}`,
     }),
   };
+  return src;
 }
 
 function deps(runnerDir: string, source: TicketSource, o: Partial<Omit<GateActionDeps, "runnerDir" | "source">> = {}): GateActionDeps {
@@ -204,6 +208,49 @@ test("handleGateAction: records gateResolvedBy in the thread record before setSt
   assert.equal(updated?.gateResolvedBy["01-plan"], "U1");
 });
 
+test("handleGateAction: two concurrent approve calls on the same key+stage are serialized — one succeeds, one is rejected as in-flight, setStateType runs once", async () => {
+  const runnerDir = await tmpRunnerDir();
+  await writeGateMap(runnerDir, "ENG-1", "gate-uuid");
+  const source = fakeSource("started");
+  // Slow this down deliberately: the lock must span the whole async critical section (through
+  // setStateType), not just the synchronous prefix, otherwise a call that's already past the
+  // pending check could still race a concurrent one here.
+  const realSetStateType = source.setStateType;
+  source.setStateType = async (issueId: string, type: "completed" | "canceled") => {
+    await new Promise((r) => setTimeout(r, 20));
+    await realSetStateType(issueId, type);
+  };
+
+  const d = deps(runnerDir, source);
+  const [r1, r2] = await Promise.all([
+    handleGateAction({ userId: "U1", key: "ENG-1", stage: "01-plan", approved: true }, d),
+    handleGateAction({ userId: "U2", key: "ENG-1", stage: "01-plan", approved: true }, d),
+  ]);
+
+  const results = [r1, r2];
+  assert.equal(results.filter((r) => r.ok).length, 1, "exactly one concurrent call should succeed");
+  const rejected = results.find((r) => !r.ok);
+  assert.ok(rejected && !rejected.ok);
+  if (rejected && !rejected.ok) assert.match(rejected.message, /이미 처리 중/);
+  assert.equal(source.calls.filter((c) => c.startsWith("setStateType")).length, 1, "setStateType must run exactly once");
+});
+
+test("handleGateAction: the in-flight lock is released after completion, so a later call for the same key+stage proceeds normally", async () => {
+  const runnerDir = await tmpRunnerDir();
+  await writeGateMap(runnerDir, "ENG-2", "gate-uuid-2");
+  const source = fakeSource("started");
+  const d = deps(runnerDir, source);
+
+  const first = await handleGateAction({ userId: "U1", key: "ENG-2", stage: "01-plan", approved: true }, d);
+  assert.equal(first.ok, true);
+
+  // The gate is now "completed" per the fake source's fixed stateType — a later call should hit
+  // the ordinary "already resolved" path, not the in-flight lock (proving the lock was released).
+  const second = await handleGateAction({ userId: "U2", key: "ENG-2", stage: "01-plan", approved: true }, d);
+  assert.equal(second.ok, false);
+  if (!second.ok) assert.doesNotMatch(second.message, /이미 처리 중/);
+});
+
 // ── parseSdlcCommand ─────────────────────────────────────────────────────────
 
 test("parseSdlcCommand: 'run ENG-12' -> run", () => {
@@ -317,4 +364,56 @@ test("notifier.gateWaiting: posts with reply_broadcast true", async () => {
 
   const gatePost = client.posted.find((p: any) => p.reply_broadcast === true);
   assert.ok(gatePost, "gateWaiting must post with reply_broadcast: true");
+});
+
+// ── isSlackStartupRejection ──────────────────────────────────────────────────
+
+test("isSlackStartupRejection: a @slack/web-api WebAPIPlatformError-shaped error is recognised", () => {
+  class WebAPIPlatformError extends Error {
+    data = { ok: false, error: "invalid_auth" };
+  }
+  assert.equal(isSlackStartupRejection(new WebAPIPlatformError("An API error occurred: invalid_auth")), true);
+});
+
+test("isSlackStartupRejection: any error carrying an unrecoverable socket-mode start code is recognised, regardless of class name", () => {
+  class SomeOtherError extends Error {
+    data = { error: "account_inactive" };
+  }
+  assert.equal(isSlackStartupRejection(new SomeOtherError("boom")), true);
+});
+
+test("isSlackStartupRejection: an error whose stack runs through node_modules/@slack/* is recognised", () => {
+  const err = new Error("mystery failure");
+  err.stack = "Error: mystery failure\n    at WebClient.apiCall (/app/node_modules/@slack/web-api/dist/WebClient.js:206:19)";
+  assert.equal(isSlackStartupRejection(err), true);
+});
+
+test("isSlackStartupRejection: an ordinary application error is NOT recognised as Slack-related", () => {
+  const err = new Error("pipeline stage 03-build failed: exit 1");
+  err.stack = "Error: pipeline stage 03-build failed\n    at runStage (/app/src/claude.ts:42:9)";
+  assert.equal(isSlackStartupRejection(err), false);
+});
+
+test("isSlackStartupRejection: a non-Error rejection reason is NOT recognised as Slack-related", () => {
+  assert.equal(isSlackStartupRejection("just a string rejection"), false);
+  assert.equal(isSlackStartupRejection({ error: "invalid_auth" }), false);
+  assert.equal(isSlackStartupRejection(undefined), false);
+});
+
+// ── shouldBlockDoubleStart ───────────────────────────────────────────────────
+
+test("shouldBlockDoubleStart: neither started nor active -> false", () => {
+  assert.equal(shouldBlockDoubleStart("ENG-1", new Set(), () => false), false);
+});
+
+test("shouldBlockDoubleStart: already in the started-keys set -> true", () => {
+  assert.equal(shouldBlockDoubleStart("ENG-1", new Set(["ENG-1"]), () => false), true);
+});
+
+test("shouldBlockDoubleStart: already run-active -> true, even if not in the started-keys set", () => {
+  assert.equal(shouldBlockDoubleStart("ENG-1", new Set(), (key) => key === "ENG-1"), true);
+});
+
+test("shouldBlockDoubleStart: a different key in the started-keys set does not block this one", () => {
+  assert.equal(shouldBlockDoubleStart("ENG-2", new Set(["ENG-1"]), () => false), false);
 });
