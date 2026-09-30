@@ -65,7 +65,7 @@ Linear 티켓이 들어오면 `00 setup`이 승인 게이트용 Linear 하위 �
 | --- | --- | --- |
 | `completed` (Done류) | approved | 다음 단계로 진행 |
 | `canceled` (Canceled류) | rejected | 파이프라인 즉시 중단. 그 하위 이슈에 남은 최신 코멘트를 반려 사유로 로그에 남긴다 |
-| 그 외(`triage`/`backlog`/`unstarted`/`started`) | pending | `gatePollIntervalMs`(기본 10초)마다 재조회. `gateTimeoutMs`(기본 30분) 안에 결정이 안 나면 타임아웃으로 반려 처리하고 파이프라인을 중단한다 |
+| 그 외(`triage`/`backlog`/`unstarted`/`started`) | pending | `gatePollIntervalMs`(기본 10초)마다 재조회. `gateTimeoutMs`(기본 30분) 안에 결정이 안 나면 타임아웃으로 반려 처리하고 파이프라인을 중단한다(**01 Plan 인터뷰의 타임아웃은 정반대다 — §2.1 참고**) |
 
 게이트별 승인자 역할은 `sdlc.config.json`의 `gateRoles`에서 온다.
 
@@ -92,6 +92,15 @@ Linear 티켓이 들어오면 `00 setup`이 승인 게이트용 Linear 하위 �
 때까지, 또는 `interviewMaxRounds`(기본 5)에 도달할 때까지 반복한다. `[이대로 진행]`이나 라운드 상한 도달은
 남은 질문을 미해결로 둔 채 게이트로 넘어간다. Slack이 꺼져 있거나 webhook 모드면 `noInterview` 구현이 즉시
 `proceed`를 반환해 지금과 같이 인터뷰 없이 게이트로 간다.
+
+`[답변 반영]`/`[이대로 진행]`은 역할 제한이 없다 — `gateRoles`/`roleGroups`로 승인자를 확인하는 게이트의
+`[✅ 승인]`/`[⛔ 반려]`와 달리, 인터뷰는 승인이 아니므로 스레드 참여자 누구나 누를 수 있다.
+
+**타임아웃은 게이트와 반대 방향이다.** §2의 일반 게이트는 `gateTimeoutMs` 안에 결정이 안 나면 타임아웃을
+반려로 취급해 파이프라인을 중단한다. `InterviewOutcome`의 `timeout`(아무도 `gateTimeoutMs` 동안 답하지도
+버튼을 누르지도 않은 경우)은 그 반대로 `[이대로 진행]`과 같게 처리된다 — 남은 질문을 미해결로 둔 채 그대로
+`01-plan` 게이트로 **진행**한다. 인터뷰는 사람이 막연히 답을 미루는 것만으로 파이프라인 전체가 멈추면 안
+된다는 설계다(최종 판단은 어차피 뒤이은 PO 게이트가 한다).
 
 ### 2.2 반려 후 재작업 (01·02·03)
 

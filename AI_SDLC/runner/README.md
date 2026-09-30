@@ -19,9 +19,15 @@ for the Slack-facing walkthrough):
   runner asks the requester in the Slack thread instead of opening the
   `01-plan` gate right away. Thread replies get collected; `[답변 반영]` feeds
   them back into the same `claude -p --resume` session to revise `intent.md`,
-  `[이대로 진행]` proceeds with whatever is still unanswered. Capped at
-  `interviewMaxRounds` (default 5) rounds; with Slack off or in webhook mode,
-  it's skipped entirely.
+  `[이대로 진행]` proceeds with whatever is still unanswered. Either button can
+  be pressed by **any thread participant** — unlike gate approve/reject, this
+  isn't role-checked against `gateRoles`/`roleGroups`, since an interview
+  round isn't an approval. Capped at `interviewMaxRounds` (default 5) rounds;
+  with Slack off or in webhook mode, it's skipped entirely. **Timeout differs
+  from an ordinary gate's:** if nobody acts within `gateTimeoutMs`, the
+  interview resolves as `timeout` and — like `[이대로 진행]` — the pipeline
+  still *proceeds* to the `01-plan` gate with questions left open, whereas an
+  ordinary gate timeout is treated as a rejection and halts the pipeline.
 - **Rejection rework (01/02/03 gates only).** Rejecting `01-plan`, `02-design`,
   or `03-build` (with a reason, from the Slack modal or a Linear comment) no
   longer stops the pipeline — the runner resumes that stage's session with

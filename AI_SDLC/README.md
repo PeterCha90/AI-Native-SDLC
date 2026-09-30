@@ -1,6 +1,6 @@
 <p align="center">
   <img src="https://img.shields.io/badge/AI--native-SDLC-blueviolet?style=for-the-badge" alt="AI-native SDLC" />
-  <img src="https://img.shields.io/badge/version-0.3.0-blue?style=for-the-badge" alt="Version" />
+  <img src="https://img.shields.io/badge/version-0.4.0-blue?style=for-the-badge" alt="Version" />
   <img src="https://img.shields.io/badge/Claude_Code-plugin-orange?style=for-the-badge" alt="Claude Code plugin" />
   <img src="https://img.shields.io/badge/node-%3E%3D22-brightgreen?style=for-the-badge" alt="Node >= 22" />
 </p>
@@ -305,8 +305,13 @@ npm start
 | 3 | 스레드 참여자 누구나 답글을 달 수 있다(인터뷰는 승인이 아니다). 메시지 아래에 "답변 N개 받음"이 갱신된다 |
 | 4 | `[답변 반영]` — 모은 답을 Linear 원 티켓에 코멘트로 남기고, 01 세션을 이어서(`--resume`) intent.md를 고친다. 질문 메시지는 `✅ 답변 N개 반영 (by @누구)`로 바뀐다. 질문이 남아 있으면 다음 라운드가 다시 열린다 |
 | 5 | `[이대로 진행]` — 남은 질문은 미해결로 둔 채 바로 `01-plan` 게이트로 넘어간다. 5회에 도달해도 같은 동작이다 |
+| 6 | 아무도 답하지 않고 `gateTimeoutMs`(기본 30분)가 지나면 `timeout`으로 처리된다 — **이때도 `[이대로 진행]`과 같이 남은 질문을 미해결로 둔 채 `01-plan` 게이트로 진행한다.** 보통 게이트가 대기 시간을 넘기면 반려로 처리돼 파이프라인이 멈추는 것과 반대다(아래 "게이트와 다른 점" 참고) |
+
+`[답변 반영]`/`[이대로 진행]` 버튼은 **역할 제한이 없다** — `gateRoles`/`roleGroups`로 승인자를 확인하는 `[✅ 승인]`/`[⛔ 반려]`와 달리, 인터뷰는 승인이 아니므로 스레드에 있는 아무나 누를 수 있다.
 
 Slack이 꺼져 있거나 webhook 모드면 인터뷰 없이(`noInterview`) 바로 게이트로 간다.
+
+**게이트와 다른 점(타임아웃):** 보통 게이트는 `gateTimeoutMs` 안에 결정이 안 나면 타임아웃 = 반려로 처리돼 파이프라인이 멈춘다. 인터뷰 타임아웃은 그와 반대로 **진행**이다 — 질문이 남아 있어도 막지 않고 PO가 게이트에서 판단하도록 넘긴다.
 
 ### ⑩ 반려 후 재작업 (01·02·03)
 
