@@ -1,9 +1,9 @@
 {
   "ticketSource": "linear",
-  "repoPath": "../demo",
+  "repoPath": "../todo-app",
   "port": 3939,
   "e2eDriver": "ego-lite",
-  "demoAppUrl": "http://localhost:5173",
+  "demoAppUrl": "http://localhost:5180",
   "useWorktree": true,
   "linearTeamId": "bb9ddb14-778f-49bd-b8e5-429c737eab00",
   "autoTicketLabel": "sdlc-auto",

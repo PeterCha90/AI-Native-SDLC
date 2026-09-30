@@ -1,0 +1,27 @@
+{
+  "name": "todo-app",
+  "private": true,
+  "version": "0.1.0",
+  "description": "에러 로그를 주기적으로 모아 σ 판정 후 Linear 티켓을 여는 시연용 TODO 앱",
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "server": "node server/index.mjs",
+    "web": "vite",
+    "monitor": "node ops/monitor.mjs",
+    "monitor:once": "node ops/monitor.mjs --once",
+    "traffic": "node scripts/traffic.mjs",
+    "reset": "node scripts/reset.mjs",
+    "test": "node --test test/*.test.mjs",
+    "build": "vite build",
+    "e2e": "bash e2e/check.sh"
+  },
+  "dependencies": {
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.1.1",
+    "vite": "^8.3.1"
+  }
+}

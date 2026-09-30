@@ -1,0 +1,9 @@
+node_modules
+dist
+logs
+ops/outbox
+ops/.monitor-state.json
+.env
+
+# /sdlc-init 이 만드는 파일 — 사용자가 직접 생성한다
+.claude/

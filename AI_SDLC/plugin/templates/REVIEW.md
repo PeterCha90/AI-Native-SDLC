@@ -10,7 +10,7 @@ diff를 아래 세 패스로 각각 훑는다. 패스를 건너뛰지 않는다.
 1. **Bugs** — 로직 오류, 경계 조건, null/undefined 처리, 에러 처리 누락, 기존 동작 회귀.
 2. **Security** — 인증/인가 우회, 인젝션, 시크릿 노출, 신뢰 경계에서의 입력 검증 누락.
    `hooks/block-secrets.sh`가 이미 걸러낸 패턴이라도 로직 레벨의 시크릿 취급 문제는 별도로 본다.
-3. **Compliance** — `CLAUDE.md`, 조직 skills, `docs/spec/<id>.md`의 정책 요구사항과 어긋나는 지점.
+3. **Compliance** — `CLAUDE.md`·`.claude/CLAUDE.md`, 조직 skills, `docs/spec/<id>.md`의 정책 요구사항과 어긋나는 지점.
    spec.md에 "정책 충돌"로 인라인 표시된 항목이 실제 구현에서 어떻게 처리됐는지 확인한다.
 
 ## Important vs Nit

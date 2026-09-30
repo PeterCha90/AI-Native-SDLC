@@ -212,7 +212,7 @@ export async function runInit(d: InitDeps): Promise<{ saved: boolean; layout: Re
 
   // Step 9 — Repo templates.
   const wantTemplates = await prompter.confirm({
-    message: "저장소에 CLAUDE.md·REVIEW.md·ops/ 템플릿을 설치할까? (이미 있는 파일은 건너뛴다)",
+    message: "저장소에 .claude/CLAUDE.md·REVIEW.md·ops/ 템플릿을 설치할까? (이미 있는 파일은 건너뛴다)",
     initialValue: true,
   });
   if (prompter.isCancel(wantTemplates)) return abort(layout);

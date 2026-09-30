@@ -1,7 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { runDoctor, formatChecks, type Check, type DoctorDeps } from "../src/cli/doctor.ts";
 import type { Verifier } from "../src/cli/verify.ts";
+
+async function tmpRepo(): Promise<string> {
+  return await mkdtemp(join(tmpdir(), "ai-sdlc-doctor-test-"));
+}
 
 function fakeVerifier(overrides: Partial<Verifier> = {}): Verifier {
   return {
@@ -172,6 +179,38 @@ test("formatChecks renders a table with status marks", () => {
   assert.match(table, /✅ A/);
   assert.match(table, /❌ B/);
   assert.match(table, /⚠️ C/);
+});
+
+test("저장소 템플릿 check finds .claude/CLAUDE.md, not a root CLAUDE.md", async () => {
+  const repoRoot = await tmpRepo();
+  await mkdir(join(repoRoot, ".claude"), { recursive: true });
+  await writeFile(join(repoRoot, ".claude", "CLAUDE.md"), "# CLAUDE.md\n", "utf8");
+  await writeFile(join(repoRoot, "REVIEW.md"), "# REVIEW.md\n", "utf8");
+  await mkdir(join(repoRoot, "ops"), { recursive: true });
+  await writeFile(join(repoRoot, "ops", "bands.yaml"), "bands: []\n", "utf8");
+  await writeFile(join(repoRoot, "ops", "detect.sh"), "#!/bin/sh\n", "utf8");
+
+  const exec = greenExec();
+  const checks = await runDoctor({ exec, verifier: fakeVerifier(), repoRoot, config: null, credentials: creds() });
+  const check = checks.find((c) => c.name === "저장소 템플릿");
+  assert.ok(check);
+  assert.equal(check!.ok, true);
+  assert.equal(check!.blocking, false);
+  assert.match(check!.detail, /모두 있음/);
+});
+
+test("저장소 템플릿 check is a non-blocking warning when .claude/CLAUDE.md is missing, even if a root CLAUDE.md exists", async () => {
+  const repoRoot = await tmpRepo();
+  await writeFile(join(repoRoot, "CLAUDE.md"), "# team CLAUDE.md\n", "utf8");
+
+  const exec = greenExec();
+  const checks = await runDoctor({ exec, verifier: fakeVerifier(), repoRoot, config: null, credentials: creds() });
+  const check = checks.find((c) => c.name === "저장소 템플릿");
+  assert.ok(check);
+  assert.equal(check!.ok, false);
+  assert.equal(check!.blocking, false);
+  assert.match(check!.detail, /\.claude\/CLAUDE\.md/);
+  assert.match(check!.fix ?? "", /init|sdlc-init/);
 });
 
 test("everything green produces no blocking failures", async () => {

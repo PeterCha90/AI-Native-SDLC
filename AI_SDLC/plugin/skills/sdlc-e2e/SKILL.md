@@ -22,12 +22,12 @@ printf 'cliLog("ok")\n' | ego-browser nodejs 2>&1
 
 ## 호출 형태
 
-로컬로 뜬 화면(예: `http://localhost:5173`)을 열어 텍스트 스냅샷을 찍는 정확한 형태:
+로컬로 뜬 화면(예: `http://localhost:5180`)을 열어 텍스트 스냅샷을 찍는 정확한 형태:
 
 ```bash
 ego-browser nodejs <<'EOF'
 const task = await useOrCreateTaskSpace('e2e review')
-await openOrReuseTab('http://localhost:5173', { wait: true, timeout: 20 })
+await openOrReuseTab('http://localhost:5180', { wait: true, timeout: 20 })
 cliLog(await snapshotText())
 EOF
 ```

@@ -18,8 +18,8 @@ spec.md에 온전히 문서화한다. 분석가가 스펙을 쓰고 디자이너
 ## 절차
 
 1. intent.md를 읽는다. 문제/원하는 결과/영향 범위/제약/미해결 질문을 그대로 근거로 삼는다.
-2. **저장소에 있는 skills를 찾아 적용**한다. `.claude/skills/`, 플러그인 skills, CLAUDE.md에 언급된
-   컨벤션·브랜드 가이드라인을 확인하고 스펙이 그것과 어긋나지 않게 만든다.
+2. **저장소에 있는 skills를 찾아 적용**한다. `.claude/skills/`, 플러그인 skills, `CLAUDE.md`와
+   `.claude/CLAUDE.md`에 언급된 컨벤션·브랜드 가이드라인을 확인하고 스펙이 그것과 어긋나지 않게 만든다.
 3. `docs/spec/<ticket-id>.md`에 아래 항목을 채운다.
 
 ```markdown

@@ -196,7 +196,7 @@ npx ai-sdlc-runner init
 | 6 | Slack 채널 | 채널 ID 또는 채널 링크를 붙여넣으면 ID를 뽑아낸다. 확인 메시지를 보내 봇이 그 채널에 있는지 검증하고, `not_in_channel`이면 `/invite` 안내 후 다시 묻는다 |
 | 7 | 승인 역할 (선택) | 역할별로 Slack 사용자 그룹을 고른다. 건너뛰면 채널 멤버 누구나 승인할 수 있다 |
 | 8 | 시작 방식 | 버튼(기본) 또는 자동 |
-| 9 | 저장소 템플릿 | `CLAUDE.md`·`REVIEW.md`·`ops/`가 없으면 설치할지 묻는다(`/sdlc-init`과 같은 파일) |
+| 9 | 저장소 템플릿 | `.claude/CLAUDE.md`·`REVIEW.md`·`ops/`가 없으면 설치할지 묻는다(`/sdlc-init`과 같은 파일) |
 | 10 | 저장 · 요약 | `config.json`·`credentials.json`을 저장하고 `doctor` 결과와 `npx ai-sdlc-runner start` 안내를 보여 준다 |
 
 토큰 형식이 서로 바뀌었으면(`xoxb-`↔`xapp-` 자리를 헷갈리는 흔한 실수) 접두어로 바로 알려 주고 그 단계만 다시 묻는다. 검증에 실패해도 그 단계만 재질문한다(단계마다 최대 3번, 넘기면 아무것도 저장하지 않고 중단). Ctrl+C를 눌러도 마찬가지로 아무 파일도 쓰지 않는다.
@@ -405,11 +405,11 @@ Linear → Settings → API → Webhooks에서 `<터널 주소>/webhook/linear`�
 
 | 설정 | 기본값 | 설명 |
 | --- | --- | --- |
-| `repoPath` | `../demo` | 파이프라인이 작업할 저장소. **내 저장소로 바꾼다** |
+| `repoPath` | `../todo-app` | 파이프라인이 작업할 저장소. **내 저장소로 바꾼다** |
 | `linearTeamId` | — | Linear 팀 ID |
 | `port` | `3939` | `GET /health`와 webhook 포트. `PORT` 환경변수가 우선한다 |
 | `useWorktree` | `true` | 티켓마다 별도 worktree에서 작업 |
-| `e2eDriver` / `demoAppUrl` | `ego-lite` / `http://localhost:5173` | 04 Test의 e2e 도구와 열어 볼 주소 |
+| `e2eDriver` / `demoAppUrl` | `ego-lite` / `http://localhost:5180` | 04 Test의 e2e 도구와 열어 볼 주소 |
 | `gatePollIntervalMs` | `10000` | 게이트 확인 간격 |
 | `gateTimeoutMs` | `1800000` | 승인 대기 상한 (30분) |
 | `maxAutoTicketDepth` | `3` | 06이 연쇄로 만들 수 있는 자동 티켓 깊이 |
@@ -468,7 +468,7 @@ AI_SDLC/
 │   ├── slack/manifest.yaml           # Slack 앱 매니페스트
 │   ├── src/slack/                    # Bolt 앱, 역할 확인, 메시지, 알림
 │   └── sdlc.config.json
-├── demo/                             # 플러그인을 적용해 둔 예시 저장소
+├── todo-app/                         # 플러그인을 적용해 둔 예시 저장소 (Daybook)
 └── docs/
     ├── stage-map.md                  # 단계 × 스킬/hook/승인자 대응표
     └── architecture.md               # 설계와 그 이유

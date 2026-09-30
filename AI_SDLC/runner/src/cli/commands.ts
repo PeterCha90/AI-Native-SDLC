@@ -60,7 +60,7 @@ export async function installTemplatesReal(repoRoot: string): Promise<string[]> 
     installed.push(destRel);
   };
 
-  copyIfMissing(join(templatesDir, "CLAUDE.md.template"), "CLAUDE.md");
+  copyIfMissing(join(templatesDir, "CLAUDE.md.template"), join(".claude", "CLAUDE.md"));
   copyIfMissing(join(templatesDir, "REVIEW.md"), "REVIEW.md");
   copyIfMissing(join(templatesDir, "ops", "bands.yaml"), "ops/bands.yaml");
   copyIfMissing(join(templatesDir, "ops", "detect.sh"), "ops/detect.sh", 0o755);

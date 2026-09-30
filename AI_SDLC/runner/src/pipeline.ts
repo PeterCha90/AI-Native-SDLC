@@ -577,7 +577,7 @@ export async function runPipeline(
     key,
     "03-build",
     `승인된 ${docsPlan} 의 작업 목록을 순서대로 구현하라. 계획에 없는 파일은 건드리지 마라 — ` +
-      `plan-drift 훅이 커밋 시점에 계획과 실제 변경을 대조한다. 저장소 CLAUDE.md 의 규칙을 따르라.`,
+      `plan-drift 훅이 커밋 시점에 계획과 실제 변경을 대조한다. 저장소의 CLAUDE.md와 .claude/CLAUDE.md 규칙을 따르라.`,
     workDir,
     ev,
     config.pluginDir,

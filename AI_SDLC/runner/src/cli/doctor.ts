@@ -188,13 +188,27 @@ export async function runDoctor(d: DoctorDeps): Promise<Check[]> {
       blocking: false,
     });
 
-    const templateFiles = ["CLAUDE.md", "REVIEW.md", "ops/bands.yaml", "ops/detect.sh"];
-    const missing = templateFiles.filter((f) => !existsSync(join(d.repoRoot as string, f)));
+    // SDLC용 CLAUDE.md는 루트가 아니라 `.claude/CLAUDE.md`에 둔다 — 루트에 팀 CLAUDE.md가 이미 있어도
+    // 건너뛰지 않기 위해서다(Claude Code는 둘 다 읽는다). 나머지 템플릿은 그대로 저장소 루트에 둔다.
+    const claudeMdRel = join(".claude", "CLAUDE.md");
+    const otherTemplateFiles = ["REVIEW.md", "ops/bands.yaml", "ops/detect.sh"];
+    const hasClaudeMd = existsSync(join(d.repoRoot as string, claudeMdRel));
+    const hasRootClaudeMd = existsSync(join(d.repoRoot as string, "CLAUDE.md"));
+    const missingOthers = otherTemplateFiles.filter((f) => !existsSync(join(d.repoRoot as string, f)));
+    const missing = hasClaudeMd ? missingOthers : [claudeMdRel, ...missingOthers];
+    let templateDetail: string;
+    if (missing.length === 0) {
+      templateDetail = "모두 있음";
+    } else if (!hasClaudeMd && hasRootClaudeMd) {
+      templateDetail = `SDLC 규칙 파일은 .claude/CLAUDE.md 다(루트 CLAUDE.md는 팀 문서로 그대로 둔다). 누락: ${missing.join(", ")}`;
+    } else {
+      templateDetail = `누락: ${missing.join(", ")}`;
+    }
     checks.push({
       name: "저장소 템플릿",
       ok: missing.length === 0,
-      detail: missing.length === 0 ? "모두 있음" : `누락: ${missing.join(", ")}`,
-      fix: missing.length === 0 ? undefined : "npx ai-sdlc-runner init 으로 템플릿을 설치한다",
+      detail: templateDetail,
+      fix: missing.length === 0 ? undefined : "npx ai-sdlc-runner init 으로 템플릿을 설치한다 (또는 /sdlc-init)",
       blocking: false,
     });
   } else {

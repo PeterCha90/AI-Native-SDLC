@@ -55,7 +55,7 @@ Linear 티켓이 들어오면 `00 setup`이 승인 게이트용 Linear 하위 �
 
 04 test 실패는 05 deploy를 건너뛰고 바로 06 maintain으로 넘어간다(위 다이어그램의 "실패" 화살표). 05 deploy에서 PR 생성 자체가 실패해도(`useWorktree=false`가 아닌 한) 게이트를 열지 않고 곧장 06으로 넘어간다. 어느 경로든 신규 티켓은 같은 `createTicket()` 한 곳으로 모인다.
 
-파이프라인은 헤드리스 세션마다 `--plugin-dir`로 플러그인을 명시적으로 로드하지만, 사람이 `demo/` 안에서 대화형 Claude Code를 직접 열 때도 같은 플러그인이 자동으로 붙는다 — `demo/.claude/settings.json`이 로컬 마켓플레이스 `ai-sdlc-local`(`AI_SDLC/.claude-plugin/marketplace.json`, source kind `directory`, path `..`)을 통해 `ai-native-sdlc` 플러그인을 활성화해둔다. 별도 설치 없이 시연 중 수동 개입에도 동일한 skills/hooks가 걸린다.
+파이프라인은 헤드리스 세션마다 `--plugin-dir`로 플러그인을 명시적으로 로드하지만, 사람이 `todo-app/` 안에서 대화형 Claude Code를 직접 열 때도 같은 플러그인이 자동으로 붙는다 — `todo-app/.claude/settings.json`이 로컬 마켓플레이스 `ai-sdlc-local`(`AI_SDLC/.claude-plugin/marketplace.json`, source kind `directory`, path `..`)을 통해 `ai-native-sdlc` 플러그인을 활성화해둔다. 별도 설치 없이 시연 중 수동 개입에도 동일한 skills/hooks가 걸린다.
 
 ## 2. 승인 게이트 프로토콜
 
@@ -120,7 +120,7 @@ Linear 티켓이 들어오면 `00 setup`이 승인 게이트용 Linear 하위 �
 | 02 spec | `sdlc-spec` | `docs/intent/<id>.md` | `docs/spec/<id>.md` | `02-design` | `claude -p` |
 | 03 plan | `sdlc-plan` | `docs/spec/<id>.md` | `docs/plan/<id>.md`(코드 미변경) | `03-build` | `claude -p` |
 | 03 build | 스킬 없음, 승인된 plan.md를 순서대로 구현 | `docs/plan/<id>.md` | 코드 diff(`plan-drift` 훅 적용) | 없음 | `claude -p` |
-| 04 test | `sdlc-test`(화면 변경 시 `sdlc-e2e`에 위임) | 코드 diff, plan.md 성공 기준 | 통과할 때까지 수정한 루프 결과 + unit(pytest/`npm run build`)/e2e(ego-lite) 결과 | `04-test` | `claude -p` + 러너가 직접 실행하는 테스트 명령과 `runE2E` |
+| 04 test | `sdlc-test`(화면 변경 시 `sdlc-e2e`에 위임) | 코드 diff, plan.md 성공 기준 | 통과할 때까지 수정한 루프 결과 + unit(`npm test`)/e2e(`npm run e2e`, ego-lite) 결과 | `04-test` | `claude -p` + 러너가 직접 실행하는 테스트 명령과 `runE2E` |
 | 05 deploy | `sdlc-review` | 통과한 코드 diff, `docs/spec/<id>.md` | 리뷰 리포트(승인 아님, 발견만) + PR(`gh pr create`) | `05-deploy`(PR 생성 성공 시만) | `claude -p` + `gh` CLI |
 | 06 maintain | `sdlc-maintain`(2σ/3σ일 때만 호출) | `ops/detect.sh` 판정, 04/05 결과 요약 | 로그만(1σ) / 읽기전용 진단(2σ) / `docs/intent/<new-id>.md` + 신규 Linear 티켓(3σ, depth < 상한일 때만) | `06-maintain` | `ops/detect.sh`(결정론) + `claude -p`(2σ·3σ만) |
 
@@ -170,7 +170,7 @@ runner가 로드하는 어댑터를 `adapters/linear.ts` 대신 `adapters/jira.t
 
 | 계층 | 이름 | 이벤트/매처 | 하는 일 | 걸리는 단계 |
 | --- | --- | --- | --- | --- |
-| CLAUDE.md | `demo/CLAUDE.md` | - | 저장소 컨텍스트(명령어, 컨벤션, 아키텍처, 반복된 실수) 1페이지 | 01~06 전 단계 — `claude -p`는 매 호출마다 이걸 읽는다 |
+| CLAUDE.md | `todo-app/.claude/CLAUDE.md` | - | 저장소 컨텍스트(명령어, 컨벤션, 아키텍처, 반복된 실수) 1페이지 | 01~06 전 단계 — `claude -p`는 매 호출마다 이걸 읽는다 |
 | skills | `sdlc-intent` | `Skill` | 01 intent 산출물(`docs/intent/<id>.md`) 작성 | 01 intent |
 | skills | `sdlc-spec` | `Skill` | 02 spec 산출물 작성, "정책 충돌" 인라인 표시 | 02 spec |
 | skills | `sdlc-plan` | `Skill` | 03 plan 산출물 작성(코드 미변경) + "무엇이 깨질 수 있는가" 심문 | 03 plan |
