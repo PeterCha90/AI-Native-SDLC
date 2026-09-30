@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { runPipeline } from "../src/pipeline.ts";
 import { STAGES, gateMapPath, type StageId } from "../src/gate.ts";
 import type { Config } from "../src/config.ts";
+import { bundledPluginDir } from "../src/paths.ts";
 import type { IssueComment, NewTicket, StateType, Ticket, TicketSource } from "../src/adapters/types.ts";
 
 /**
@@ -123,10 +124,12 @@ function recordingSource(states: Record<string, StateType[]>): Recorder {
   return { source, created, comments, polled };
 }
 
-function makeConfig(repoPath: string): Config {
+function makeConfig(repoPath: string, runnerDir: string): Config {
   return {
     ticketSource: "linear",
     repoPath,
+    baseDir: runnerDir,
+    pluginDir: bundledPluginDir(),
     port: 3939,
     e2eDriver: "ego-lite",
     demoAppUrl: "http://localhost:5173",
@@ -180,7 +183,7 @@ test("all six gates approved: the pipeline runs every stage and writes its artif
   const runnerDir = await mkdtemp(join(tmpdir(), "sdlc-runner-"));
   const rec = recordingSource({});
 
-  await withStubs(0, () => runPipeline(TICKET, makeConfig(repo), rec.source, runnerDir));
+  await withStubs(0, () => runPipeline(TICKET, makeConfig(repo, runnerDir), rec.source, runnerDir));
 
   const log = await stageLog(runnerDir, "ENG-1");
   const stages = log.map((e) => e.stage);
@@ -211,7 +214,7 @@ test("a valid existing .state/<key>.gates.json is reused — 00-setup is skipped
   const preExistingMap = Object.fromEntries(STAGES.map((s) => [s, { issueId: `existing-${s}`, key: `PRE-${s}`, url: `http://pre/${s}` }]));
   await writeFile(gateMapPath(runnerDir, "ENG-1"), JSON.stringify(preExistingMap), "utf8");
 
-  await withStubs(0, () => runPipeline(TICKET, makeConfig(repo), rec.source, runnerDir));
+  await withStubs(0, () => runPipeline(TICKET, makeConfig(repo, runnerDir), rec.source, runnerDir));
 
   const log = await stageLog(runnerDir, "ENG-1");
   assert.ok(
@@ -235,7 +238,7 @@ test("a rejected 02 Design gate stops the pipeline before any code is touched", 
   const runnerDir = await mkdtemp(join(tmpdir(), "sdlc-runner-"));
   const rec = recordingSource({ "uuid-02-design": ["canceled"] });
 
-  await withStubs(0, () => runPipeline(TICKET, makeConfig(repo), rec.source, runnerDir));
+  await withStubs(0, () => runPipeline(TICKET, makeConfig(repo, runnerDir), rec.source, runnerDir));
 
   const log = await stageLog(runnerDir, "ENG-1");
   const stages = log.map((e) => e.stage);
@@ -257,7 +260,7 @@ test("a 3σ breach closes the loop by opening a follow-up ticket even when the a
   // Then force the sdlc-maintain agent session itself to fail.
   await withStubs(1, async () => {
     process.env.STUB_CLAUDE_FAIL_ON = "sdlc-maintain";
-    await runPipeline(TICKET, makeConfig(repo), rec.source, runnerDir);
+    await runPipeline(TICKET, makeConfig(repo, runnerDir), rec.source, runnerDir);
   });
 
   assert.equal(rec.created.length, 1, "the runner must open the ticket the agent failed to create");
@@ -277,7 +280,7 @@ test("an auto ticket at the depth limit escalates to a human instead of looping 
   const rec = recordingSource({});
   const deep: Ticket = { ...TICKET, labels: ["sdlc-auto"], body: "sdlc-depth: 3" };
 
-  await withStubs(1, () => runPipeline(deep, makeConfig(repo), rec.source, runnerDir));
+  await withStubs(1, () => runPipeline(deep, makeConfig(repo, runnerDir), rec.source, runnerDir));
 
   assert.equal(rec.created.length, 0, "no ticket may be created past the depth limit");
   const escalation = rec.comments.find((c) => /깊이 상한/.test(c.body));

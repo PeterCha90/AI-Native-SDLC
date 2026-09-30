@@ -4,6 +4,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "../src/config.ts";
+import { repoLayout } from "../src/paths.ts";
 
 async function writeFileConfig(body: object): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "sdlc-config-"));
@@ -130,4 +131,53 @@ test("interviewMaxRounds and reworkMaxAttempts are overridable from the config f
   const config = loadConfig(baseEnv({ SDLC_CONFIG_PATH: configPath }));
   assert.equal(config.interviewMaxRounds, 8);
   assert.equal(config.reworkMaxAttempts, 1);
+});
+
+test("dev path (SDLC_CONFIG_PATH): baseDir is the runner package root, unchanged from today", async () => {
+  const configPath = await writeFileConfig({ linearTeamId: "team-1" });
+  const config = loadConfig(baseEnv({ SDLC_CONFIG_PATH: configPath }));
+  // baseDir must be the runner folder (packageRoot()), not the tmp dir the config file lives in.
+  assert.ok(config.baseDir.endsWith("runner"));
+  assert.ok(config.pluginDir.endsWith("plugin"));
+});
+
+test("loadConfig(process.env-shaped object) keeps working exactly like before (back-compat call form)", async () => {
+  const configPath = await writeFileConfig({ linearTeamId: "team-1" });
+  const env = baseEnv({ SDLC_CONFIG_PATH: configPath }) as NodeJS.ProcessEnv;
+  const config = loadConfig(env);
+  assert.equal(config.linear.teamId, "team-1");
+  assert.ok(config.baseDir.endsWith("runner"));
+});
+
+test("user path (opts.fileConfig, no SDLC_CONFIG_PATH): baseDir is repoLayout(home, repo).dir and repoPath is repo", async () => {
+  const home = "/tmp/sdlc-home-test";
+  const repo = "/tmp/sdlc-repo-test";
+  const config = loadConfig({
+    env: {} as NodeJS.ProcessEnv,
+    home,
+    repo,
+    fileConfig: { linearTeamId: "team-1" },
+    credentials: {
+      linearApiKey: "lin_api_from_creds",
+      linearWebhookSecret: "secret",
+      slackBotToken: "xoxb-from-creds",
+      slackAppToken: "xapp-from-creds",
+    },
+  });
+  assert.equal(config.baseDir, repoLayout(home, repo).dir);
+  assert.equal(config.repoPath, repo);
+  assert.equal(config.linear.apiKey, "lin_api_from_creds");
+});
+
+test("user path: env credentials win over opts.credentials for the same key", async () => {
+  const home = "/tmp/sdlc-home-test";
+  const repo = "/tmp/sdlc-repo-test";
+  const config = loadConfig({
+    env: { LINEAR_API_KEY: "lin_api_from_env" } as NodeJS.ProcessEnv,
+    home,
+    repo,
+    fileConfig: { linearTeamId: "team-1" },
+    credentials: { linearApiKey: "lin_api_from_creds", linearWebhookSecret: "secret" },
+  });
+  assert.equal(config.linear.apiKey, "lin_api_from_env");
 });

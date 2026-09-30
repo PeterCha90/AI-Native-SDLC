@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { loadConfig } from "./config.ts";
 import type { Config } from "./config.ts";
 import { createTicketSource } from "./adapters/index.ts";
@@ -12,8 +12,6 @@ import { LinearWatcher } from "./linear-watcher.ts";
 import { startSlackApp, isSlackStartupRejection } from "./slack/app.ts";
 import type { createSlackNotifier } from "./slack/notifier.ts";
 import { noInterview, type InterviewChannel } from "./interview.ts";
-
-const RUNNER_DIR = dirname(fileURLToPath(import.meta.url)).replace(/\/src$/, "");
 
 function readRawBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolvePromise, reject) => {
@@ -154,11 +152,10 @@ export function createIdempotentEnqueuer<T extends { key: string; id: string }>(
   };
 }
 
-export function startServer(): void {
-  const config = loadConfig();
+export function startServer(config: Config = loadConfig()): void {
   const source = createTicketSource(config);
   const queue = new Queue();
-  const stateDir = join(RUNNER_DIR, ".state");
+  const stateDir = join(config.baseDir, ".state");
 
   // A bad SLACK_BOT_TOKEN/SLACK_APP_TOKEN combination can reject an internal promise deep
   // inside @slack/bolt's Socket Mode client in a way that never reaches the `try/catch` around
@@ -202,7 +199,7 @@ export function startServer(): void {
   const { enqueue: enqueueTicket, isActive: isRunActive } = createIdempotentEnqueuer<Ticket>(queue, (ticket) => {
     const key = ticket.key || ticket.id;
     if (ticket.creatorEmail) requesterEmails.set(key, ticket.creatorEmail);
-    return runPipeline(ticket, config, source, RUNNER_DIR, events, interview);
+    return runPipeline(ticket, config, source, config.baseDir, events, interview);
   });
 
   async function setupNotifications(): Promise<void> {
@@ -211,7 +208,7 @@ export function startServer(): void {
         config,
         source,
         stateDir,
-        runnerDir: RUNNER_DIR,
+        runnerDir: config.baseDir,
         enqueue: enqueueTicket,
         isRunActive,
         markTicketSeen: async (id: string) => {

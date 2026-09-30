@@ -39,14 +39,87 @@ No GitHub Actions involved — this is a local Node daemon. No public URL is
 required either: Slack connects over Socket Mode and Linear is polled (or, if
 you keep the webhook wired up, pushed to `POST /webhook/linear`).
 
-## Install
+## Use it
+
+Not on npm yet — see "Run from source" below.
+
+```bash
+cd ~/code/my-app
+npx ai-sdlc-runner init      # interactive: tokens, Linear team, Slack channel, templates
+npx ai-sdlc-runner start     # boots the server
+```
+
+No clone, no config file to hand-edit, no `export`ing tokens — `init` asks for
+each token, verifies it against the real API, and saves it to a `600`
+permission file. See
+[`AI_SDLC/README.md` §3-B](../README.md#3-b-자동으로-돌리기-러너) for the exact
+question order, where each token comes from, and where everything is stored.
+Other commands:
+
+| Command | Does |
+| --- | --- |
+| `doctor` | Pre-flight checks as a table: Node version, `claude` installed/logged in, Linear MCP connected, the three tokens, target repo is git, template files present, `ego-browser` readiness. (Bot channel membership is only checked during `init`, not `doctor`.) |
+| `manifest [--open]` | Prints the Slack app manifest YAML; `--open` also opens the app-creation page. |
+| `config` | Prints the current settings (tokens masked to their first 8 characters). |
+
+## Build & package
+
+```bash
+npm run build
+```
+
+Runs `tsc -p tsconfig.build.json`, emitting `dist/` (Node doesn't strip types
+out of `node_modules`, so the published package has to ship plain JS). `bin`
+points at `dist/cli.js` under the names `ai-sdlc-runner` and `ai-sdlc`.
+`prepack` runs the build and copies `../plugin` into `./plugin`, so the
+tarball carries the skills/hooks/templates that `init` installs. Before
+publishing:
+
+```bash
+npm run smoke:pack
+```
+
+`npm pack`s the current tree, installs the resulting tarball into a scratch
+directory, and checks that `npx ai-sdlc-runner --help` and `manifest` exit 0
+and that the installed package actually contains
+`plugin/skills/sdlc-intent/SKILL.md` and `slack/manifest.yaml`. `npm publish`
+itself stays a manual step for whoever owns the npm account.
+
+## File locations
+
+```
+~/.ai-sdlc/
+└── repos/<repo folder name>-<10-char hash>/
+    ├── config.json        non-secret settings
+    ├── credentials.json   tokens, 600 permissions (700 on the folder)
+    ├── .state/            per-stage session records
+    └── .worktrees/        per-ticket worktrees
+```
+
+Same dot-folder names the runner has always used (`.state/`, `.worktrees/`) —
+only the parent directory changes. One directory per repo, so a single person
+can run the CLI against several repos without their state colliding.
+Precedence is **env var > `credentials.json`/`config.json` > default**.
+Default home is `~/.ai-sdlc`; override with `--home <dir>` or `AI_SDLC_HOME`,
+and point at a different repo with `--repo <path>` (default: current
+directory). Running from source inside `AI_SDLC/runner/` with `npm start`
+keeps using `runner/sdlc.config.json` and `runner/.state`/`runner/.worktrees`
+exactly as before (or whatever `SDLC_CONFIG_PATH` points at) — the dev
+workflow below doesn't change.
+
+## Run from source
+
+Until the package is on npm — or when you're changing the runner itself — run
+it straight from this checkout:
 
 ```bash
 cd AI_SDLC/runner
 npm install
+node --experimental-strip-types src/cli.ts init
+node --experimental-strip-types src/cli.ts start
 ```
 
-## Configure
+### Configure
 
 Non-secret settings live in `sdlc.config.json` (already checked in with
 placeholder values — edit `linearTeamId`, `repoPath`, etc.). **Secrets only
@@ -79,7 +152,7 @@ is missing, the Slack bot stays off and the runner behaves exactly as before
 | `interviewMaxRounds` | `5` | Max round-trips in the 01 Plan interview loop before it behaves like `[이대로 진행]`. |
 | `reworkMaxAttempts` | `3` | Max times a rejected `01-plan`/`02-design`/`03-build` gate re-runs its stage before the pipeline stops. |
 
-## Run
+### Run
 
 ```bash
 npm start
@@ -89,7 +162,7 @@ Prints the webhook URL (if `linearTrigger` is `"webhook"`), the
 `~/.claude/projects/...` directory to watch, and — when Slack is on — the
 Slack connection status, channel, role mapping, and poll interval.
 
-## Wire up a Linear webhook locally
+### Wire up a Linear webhook locally
 
 Only needed when `linearTrigger` is `"webhook"` (the default when Slack is
 off). Linear needs a public URL, so tunnel the runner's port (default `3939`):
@@ -132,13 +205,16 @@ the two tokens, invite it to a channel, find user group IDs). In short:
 
 ## Progress: state files, not a served page
 
-Each stage's `claude -p` session is logged to `AI_SDLC/runner/.state/<key>.json`
-along with its transcript path (`sessionJsonlPath`), and every run also keeps a
-`.state/<key>.meta.json` (ticket, labels, depth, gate roles) and a live
-`.state/<key>.live.json` snapshot (`{ stage, phase, role?, gateUrl?, since }`).
-These are read by `/sdlc-status` and by the Slack notifier. The HTTP server
-only exposes `GET /health` and `POST /webhook/<source>` — progress is the
-Linear gate sub-issues plus (if Slack is on) the ticket's Slack thread.
+Each stage's `claude -p` session is logged to `<state dir>/<key>.json` along
+with its transcript path (`sessionJsonlPath`), and every run also keeps a
+`<key>.meta.json` (ticket, labels, depth, gate roles) and a live
+`<key>.live.json` snapshot (`{ stage, phase, role?, gateUrl?, since }`). The
+state dir is `AI_SDLC/runner/.state/` when running from source, or
+`~/.ai-sdlc/repos/<repo folder name>-<10-char hash>/.state/` when installed
+via `npx ai-sdlc-runner` (see "File locations" above). These are read by
+`/sdlc-status` and by the Slack notifier. The HTTP server only exposes
+`GET /health` and `POST /webhook/<source>` — progress is the Linear gate
+sub-issues plus (if Slack is on) the ticket's Slack thread.
 
 ## Test
 

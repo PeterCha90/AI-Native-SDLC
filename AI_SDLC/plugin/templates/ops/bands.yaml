@@ -28,7 +28,7 @@ metrics:
   e2e_failure_rate:
     description: "e2e/check.sh 실행 중 exit=1(버그 재현)로 끝난 비율. exit=2(환경 문제, ego-browser 미설치 등)는 표본에서 제외"
     window: "최근 10회 e2e/check.sh 실행 롤링"
-    baseline: 0.0   # DEMO_STRICT_VALIDATION=1인 정상 운영 상태에서는 전부 통과해야 함
+    baseline: 0.0   # 버그가 없는 정상 운영 상태에서는 전부 통과해야 함
     sigma: 0.1
     tiers:
       1sigma: log
@@ -36,7 +36,7 @@ metrics:
       3sigma: act
 
   api_5xx_rate:
-    description: "FastAPI 응답 중 5xx 상태 코드 비율 (404 not-found, 422 validation 같은 정상 4xx 경로는 제외)"
+    description: "API 응답 중 5xx 상태 코드 비율 (404 not-found, 409/422 같은 정상 4xx 경로는 제외)"
     window: "최근 100건 요청 롤링"
     baseline: 0.0   # 코드에 처리 안 된 예외가 없으면 5xx는 발생하지 않음
     sigma: 0.02

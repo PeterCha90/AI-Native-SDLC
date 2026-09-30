@@ -59,7 +59,9 @@ claude --plugin-dir <AI_SDLC/plugin 경로>
 **(b) 저장소 단위, 자동으로**
 
 프로젝트 저장소에 `.claude/settings.json`을 두고 로컬 마켓플레이스를 등록하면, 그 디렉토리에서
-`claude`를 띄울 때마다 자동으로 붙는다. 실제로 동작하는 예시(`AI_SDLC/demo/.claude/settings.json`):
+`claude`를 띄울 때마다 자동으로 붙는다. `claude plugin install ai-native-sdlc@ai-sdlc --scope project`처럼
+`--scope project`를 붙여 설치하면 이 파일을 직접 쓸 필요 없이 CLI가 만들어준다. 손으로 쓴다면 이런
+내용이다:
 
 ```json
 {
@@ -78,25 +80,29 @@ claude --plugin-dir <AI_SDLC/plugin 경로>
 ```
 
 **주의 (실측 확인됨, 실패가 조용하다):** `source.source`는 반드시 `"directory"`여야 한다 — `"local"`은
-아예 동작하지 않는다. `path`는 프로젝트 디렉토리(위 예시라면 `AI_SDLC/demo/`) 기준 **상대 경로**여야
-한다. 절대 경로를 넣으면 에러 한 줄 없이 스킬이 하나도 로드되지 않는다. 로드됐는지 확인하는 방법은
-§6 참고.
+아예 동작하지 않는다. `path`는 프로젝트 디렉토리 기준 **상대 경로**여야 한다. 절대 경로를 넣으면
+에러 한 줄 없이 스킬이 하나도 로드되지 않는다. 로드됐는지 확인하는 방법은 §6 참고.
+
+이 저장소의 예시 앱(`AI_SDLC/todo-app/`)은 이 파일을 커밋해 두지 않는다 — 클론한 사람이 아래 "저장소
+준비"를 직접 따라 하며 `.claude/`가 생기는 과정을 보게 하려는 것이다("생성하는 재미"). `AI_SDLC/todo-app/`
+안에서 위 두 방법(추천 CLI 두 줄, 또는 `--scope project`) 중 하나로 설치하면 확인할 수 있다.
 
 ### 저장소 준비
 
-대상 저장소에서 Claude Code를 열고 `/sdlc-init`을 실행한다. `CLAUDE.md`·`REVIEW.md`·`ops/bands.yaml`·`ops/detect.sh`를 깔고(기존 파일은 덮어쓰지 않음) `CLAUDE.md`의 명령어 칸을 채운다. 그다음 `CLAUDE.md`를 자기 저장소에 맞게 고친다. 규칙 두 개만 지키면 된다.
+대상 저장소에서 Claude Code를 열고 `/sdlc-init`을 실행한다. `.claude/CLAUDE.md`·`REVIEW.md`·`ops/bands.yaml`·`ops/detect.sh`를 깔고(기존 파일은 덮어쓰지 않음) `.claude/CLAUDE.md`의 명령어 칸을 채운다. SDLC용 `CLAUDE.md`를 루트가 아니라 `.claude/` 아래에 두는 건, 루트에 팀의 `CLAUDE.md`가 이미 있어도 SDLC 규칙이 빠지지 않게 하려는 것이다(Claude Code는 둘 다 읽는다). 그다음 `.claude/CLAUDE.md`를 자기 저장소에 맞게 고친다. 규칙 두 개만 지키면 된다.
 
 - **1페이지를 넘기지 말 것.** 길어지면 읽히지 않는다
 - **같은 실수를 두 번 하면 그 교정을 여기에 적을 것.** 이게 이 파일이 자라는 유일한 방법이다
 
-실제로 채워 넣은 예시가 `AI_SDLC/demo/CLAUDE.md`에 있다.
+실제로 채워 넣은 예시를 보려면 `AI_SDLC/todo-app`에서 플러그인을 설치하고(위 두 방법 중 하나) `/sdlc-init`을
+실행한다 — `.claude/CLAUDE.md`가 그 자리에 생긴다. 앞서 말했듯 이 파일은 저장소에 커밋돼 있지 않다.
 
-03 단계 이후부터는 CLAUDE.md 말고도 파이프라인이 기대하는 파일이 두 개 더 있다.
+03 단계 이후부터는 CLAUDE.md 말고도 파이프라인이 기대하는 파일이 두 개 더 있다(둘 다 `/sdlc-init`이 없으면 만든다).
 
 - `REVIEW.md` — 05 Deploy의 `sdlc-review`가 따르는 리뷰 정책 문서(Important/Nit 기준, nit 5건 상한,
-  리뷰가 지적하지 말아야 할 것). 예시: `AI_SDLC/demo/REVIEW.md`
+  리뷰가 지적하지 말아야 할 것). `AI_SDLC/todo-app/REVIEW.md`(없으면 `/sdlc-init`이 만든다)
 - `ops/bands.yaml` + `ops/detect.sh` — 06 Maintain이 이상 여부(tier)를 판정할 때 쓰는 지표 기준값과
-  결정론적 스크립트. 예시: `AI_SDLC/demo/ops/`
+  결정론적 스크립트. 예시: `AI_SDLC/todo-app/ops/`(이미 저장소에 커밋돼 있다)
 
 ---
 
@@ -118,7 +124,7 @@ export LINEAR_API_KEY=...          # 게이트 상태 폴링·코멘트·후속 
 비밀값은 이 두 환경변수로만 받는다. `sdlc.config.json`에 적지 말 것. `linearTeamId`는 환경변수가 아니라
 `sdlc.config.json`에 직접 적는 값이다(`REPLACE_WITH_LINEAR_TEAM_ID` 자리를 채운다). 나머지 설정(포트,
 대상 저장소 경로, e2e 드라이버, worktree 사용 여부, 게이트 역할/폴링 간격/타임아웃)도 `sdlc.config.json`에
-있다. `repoPath`는 `../demo`로 고정돼 있다 — 러너는 이 저장소의 `AI_SDLC/demo/`를 대상으로 돈다.
+있다. `repoPath`는 `../todo-app`으로 고정돼 있다 — 러너는 이 저장소의 `AI_SDLC/todo-app/`을 대상으로 돈다.
 
 **`LINEAR_API_KEY`만으로는 부족하다.** 첫 단계인 `00-setup`은 이 환경변수를 안 쓴다 — Claude Code 세션
 안에서 **Linear MCP 커넥터**로 승인 게이트 하위 이슈 6개를 만든다. 즉 파이프라인을 돌리는 `claude` 세션이
@@ -190,7 +196,7 @@ read-only 진단)/3σ(`act`, intent.md + 티켓)로 나눈다. tier 경계와 �
 
 ```bash
 cd AI_SDLC/runner && npm run typecheck && npm test
-bash AI_SDLC/demo/ops/detect.sh --self-check
+bash AI_SDLC/todo-app/ops/detect.sh --self-check
 ```
 
 실제로 돌려서 확인한 결과: `npm run typecheck`는 에러 없이 통과, `npm test`는 25개 테스트 전부 통과
@@ -220,38 +226,66 @@ Slack 봇을 만들고 켜는 방법(매니페스트로 앱 만들기 → 토큰
 
 ## 4. 데모 앱과 시연
 
-`AI_SDLC/demo/`가 시연용 앱이다. React+Vite / FastAPI.
+`AI_SDLC/todo-app/`이 시연용 앱이다. 프레임워크 없는 Node API 서버(`server/index.mjs`, :4100, 메모리 저장 —
+재시작하면 시드 3건으로 돌아간다)와 React/Vite 멀티페이지 UI(:5180)로 이루어진다. `/`는 사용자용 할 일 앱
+"Daybook", `/ops`는 관측 콘솔 "Daybook Ops"다.
 
 ```bash
-cd AI_SDLC/demo
-make install
-make dev       # 백엔드 :8000, 프런트 :5173
-make test      # pytest + 프런트 빌드. 04 TEST 단계가 부르는 단일 명령
-make e2e       # ego-lite로 화면 검증
+cd AI_SDLC/todo-app
+npm install
+npm run dev        # API :4100 + UI :5180
+npm test           # node --test (서버 API 테스트 + 모니터 테스트). 04 TEST 단계가 부르는 단일 명령
+npm run build
+npm run e2e        # bash e2e/check.sh. npm run dev가 떠 있어야 한다
 ```
 
-저장소 안에 파이프라인이 실제로 참조하는 파일도 함께 들어 있다.
+러너는 `package.json`에서 `npm test`를 감지해 04 TEST에서 쓴다. 자세한 사용법은
+`AI_SDLC/todo-app/README.md`에 있다.
 
-- `CLAUDE.md` — 03 Build가 매 세션 읽는 컨텍스트(명령어/컨벤션/아키텍처/반복된 실수)
-- `REVIEW.md` — 05 Deploy의 `sdlc-review`가 따르는 리뷰 정책
-- `ops/bands.yaml` + `ops/detect.sh` — 06 Maintain이 티어를 판정할 때 쓰는 기준·스크립트
+파이프라인이 실제로 참조하는 파일도 있다. `ops/`는 저장소에 커밋돼 있고, `.claude/CLAUDE.md`·`REVIEW.md`는
+플러그인 설치 후 `/sdlc-init`을 실행해야 생긴다(§1 "저장소 준비" 참고 — 이 예시 앱은 `.claude/`를
+커밋해 두지 않는다).
+
+- `.claude/CLAUDE.md` — 03 Build가 매 세션 읽는 컨텍스트(명령어/컨벤션/아키텍처/반복된 실수). 없으면 `/sdlc-init`이 만든다
+- `REVIEW.md` — 05 Deploy의 `sdlc-review`가 따르는 리뷰 정책(없으면 `/sdlc-init`이 만든다)
+- `ops/bands.yaml` + `ops/detect.sh` — 06 Maintain이 티어를 판정할 때 쓰는 기준·스크립트(이미 커밋돼 있다)
 
 ### 심어둔 버그
 
-`POST /todos`가 빈 `title`을 검증 없이 저장한다. 프런트에만 검증이 있어서 API를 직접 때리면 목록이 깨진다.
-환경변수 하나로 켜고 끈다.
+같은 제목의 미완료 할 일을 한 번 더 추가하면 409("이미 있음")가 나와야 하는데, 서버가 500으로 죽는다.
+`server/index.mjs`의 `POST /api/todos`가 `dup.createdAt.toLocaleDateString("ko-KR")`을 부르는데
+`createdAt`은 ISO 문자열이라 `TypeError`가 난다. `test/server.test.mjs`에는 중복 케이스 테스트가 일부러 없다.
 
-```bash
-unset DEMO_STRICT_VALIDATION       # 버그 ON  — 시연 시작 상태
-export DEMO_STRICT_VALIDATION=1    # 버그 OFF — 파이프라인이 고친 뒤의 상태
-```
+환경변수 토글은 없다. 파이프라인이 worktree 브랜치와 PR로 고친다. 시연을 다시 돌리려면 그 PR을 머지하지
+말고 닫는다 — main은 계속 버그가 있는 상태로 남는다.
 
-확인: `./e2e/check.sh`가 **exit 1**이면 버그가 켜진 정상 상태다. exit 0이면 꺼져 있으니 `unset` 후 백엔드를 재시작한다.
+확인: `npm run dev`를 띄운 상태에서 `npm run e2e`를 돌린다. 같은 제목을 두 번 POST해서 두 번째가 4xx(409)면
+**exit 0**(PASS), 5xx면 **exit 1**(버그 재현, 시연 시작 상태), 서버에 닿지 않으면 **exit 2**(환경 문제)다.
+ego-browser가 설치돼 있으면 화면 렌더링까지 확인하고, 없으면 HTML 응답만 확인하므로 저장소를 클론한 누구나
+돌릴 수 있다.
+
+### 프로덕션 모니터링
+
+todo-app은 장애 감지부터 티켓 생성까지 한 앱에서 보여준다.
+
+- `npm run monitor` — `ops/monitor.mjs`가 15초마다 `logs/access.jsonl`을 읽고 최근 2분(최소 10건)의
+  5xx/4xx 비율을 계산한다. 판정은 `ops/detect.sh`가 한다(모델 미관여). 1회만 돌리려면 `npm run monitor:once`.
+- 3σ 이탈이면 `claude -p`로 `sdlc-maintain` 스킬을 부른다. 도구는 Read/Glob/Grep/Skill, `Edit(docs/intent/**)`,
+  Linear MCP만 허용된다. Claude가 로그와 코드를 진단하고 `docs/intent/INC-*.md`를 쓴 뒤 Linear MCP로 티켓
+  (라벨 `sdlc-auto`, `incident`, `sdlc-depth: 1`)을 만든다. 모니터에는 `LINEAR_API_KEY`가 필요 없다.
+- 이미 올라간 장애는 다시 트리거하지 않고, 복구되면 그 티켓에 댓글을 단다. `MONITOR_DRY_RUN=1`이면 티켓 대신
+  초안을 `ops/outbox/`에 쓴다.
+- `/ops` 콘솔의 카오스 주입(서버 500 비율 0/10/30/60%)은 의존성 장애를 흉내 낸 것이지 코드 버그가 아니다.
+  Claude의 진단은 이 둘을 구분한다.
+- 트래픽은 `npm run traffic -- ok|4xx|mixed|dup N`으로 만들고, `npm run reset`으로 초기화한다.
+
+시연 흐름: 사용자가 같은 할 일을 두 번 추가 → 500 → 모니터 3σ 감지 → Claude가 "`server/index.mjs` 코드
+버그"로 진단 → Linear 티켓 → 러너가 01~06 실행(수정 + 회귀 테스트 추가) → PR → 지표 회복.
 
 ### 시연 대본
 
 `AI_SDLC/docs/demo-scenario.md`에 8구간 시간대별 대본이 있다. 준비 체크리스트, 대사, 실패 대비, Q&A 7문항 포함.
-클라이맥스는 04단계에서 e2e가 버그를 잡고 → 06단계가 Linear에 새 티켓을 자동 생성하는 지점이다.
+클라이맥스는 중복 제목 500이 모니터 3σ 감지 → Claude 진단 → Linear 티켓으로 이어지고, 러너가 그 티켓을 받아 04단계 e2e가 버그를 잡고 고치는 지점이다.
 
 시연의 눈에 보이는 축은 이제 여섯 장의 Linear 카드다. 티켓 하나가 들어오면 `00-setup`이 승인 게이트
 하위 이슈 6개를 만들고, 각 단계가 끝날 때마다 담당자가 그 카드를 Done(승인) 또는 Canceled(반려)로
@@ -296,7 +330,7 @@ export interface TicketSource {
 | --- | --- |
 | 러너가 즉시 종료 | 필수 환경변수(`LINEAR_API_KEY`, webhook 모드면 `LINEAR_WEBHOOK_SECRET`, Slack을 쓴다면 `SLACK_BOT_TOKEN`/`SLACK_APP_TOKEN`)가 셸에 있는지, `sdlc.config.json`의 `linearTeamId`가 `REPLACE_WITH_LINEAR_TEAM_ID` 그대로 남아있지 않은지 |
 | webhook이 401 | Linear 설정의 시크릿과 `LINEAR_WEBHOOK_SECRET`이 같은지 |
-| 스킬/훅이 하나도 안 붙음 | `.claude/settings.json`의 마켓플레이스 `source.source`가 `"directory"`인지(`"local"`은 동작하지 않는다), `path`가 절대 경로가 아니라 프로젝트 기준 **상대 경로**인지 확인. 실패해도 에러가 안 뜬다. 확인: `cd AI_SDLC/demo && claude -p "네가 쓸 수 있는 sdlc-* 스킬 이름만 한 줄씩 출력해라." < /dev/null` — 9개(스킬 7 + 커맨드 2, `/sdlc-init`은 별도)가 나와야 정상, 안 나오면 `path`부터 의심 |
+| 스킬/훅이 하나도 안 붙음 | `.claude/settings.json`의 마켓플레이스 `source.source`가 `"directory"`인지(`"local"`은 동작하지 않는다), `path`가 절대 경로가 아니라 프로젝트 기준 **상대 경로**인지 확인. 실패해도 에러가 안 뜬다. 확인: `cd AI_SDLC/todo-app && claude -p "네가 쓸 수 있는 sdlc-* 스킬 이름만 한 줄씩 출력해라." < /dev/null` — 9개(스킬 7 + 커맨드 2, `/sdlc-init`은 별도)가 나와야 정상, 안 나오면 `path`부터 의심 |
 | `00-setup`이 게이트 맵을 못 만듦(`no approval-gate map` 에러로 파이프라인 중단) | Linear MCP가 파이프라인을 돌리는 `claude` 세션에 인증되어 있는지 확인 — `LINEAR_API_KEY` 환경변수와는 별개의 인증이다. 리허설만 필요하면 `SDLC_AUTO_APPROVE=1`로 우회 |
 | 게이트가 계속 대기 상태로 멈춤 | 담당자가 하위 이슈를 Done/Canceled로 안 옮기면 `gateTimeoutMs`(기본 30분) 뒤 타임아웃으로 처리되고 그 단계에서 멈춘다. 카드를 옮기거나 `gateTimeoutMs`를 늘린다 |
 | e2e가 아무것도 안 뱉음 | `cliLog`는 stdout이 아니라 **stderr**로 출력한다. `2>&1` 병합했는지 |

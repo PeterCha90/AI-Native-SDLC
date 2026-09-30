@@ -23,8 +23,9 @@ claude plugin install ai-native-sdlc@ai-sdlc     # --scope project|local 로 범
 claude --plugin-dir /path/to/AI_SDLC/plugin
 ```
 
-**로컬 마켓플레이스로 상시 등록** — `.claude/settings.json`에 아래를 넣는다. 실제로 동작하는 예시는
-`AI_SDLC/demo/.claude/settings.json`:
+**로컬 마켓플레이스로 상시 등록** — `.claude/settings.json`에 아래를 넣는다(`--scope project`로 설치하면
+CLI가 이 파일을 직접 써준다). 이 저장소의 예시 앱(`AI_SDLC/todo-app/`)은 `.claude/`를 커밋해 두지 않는다 —
+아래 명령으로 설치하면 `AI_SDLC/todo-app/.claude/settings.json`이 같은 내용으로 생긴다:
 
 ```json
 {
@@ -42,7 +43,7 @@ claude --plugin-dir /path/to/AI_SDLC/plugin
 }
 ```
 
-`path`는 이 `settings.json` 파일 위치(`AI_SDLC/demo/.claude/`) 기준 상대 경로다. `..`는 마켓플레이스 정의 파일
+`path`는 이 `settings.json` 파일 위치(`AI_SDLC/todo-app/.claude/`) 기준 상대 경로다. `..`는 마켓플레이스 정의 파일
 (`AI_SDLC/.claude-plugin/marketplace.json`)이 있는 `AI_SDLC/`를 가리키고, 그 마켓플레이스가 `./plugin`을
 `ai-native-sdlc` 플러그인으로 등록한다.
 
@@ -54,12 +55,12 @@ claude --plugin-dir /path/to/AI_SDLC/plugin
 두 경로 모두 확인하려면:
 
 ```bash
-cd AI_SDLC/demo && claude -p "네가 쓸 수 있는 sdlc-* 스킬 이름만 한 줄씩 출력해라" < /dev/null
+cd AI_SDLC/todo-app && claude -p "네가 쓸 수 있는 sdlc-* 스킬 이름만 한 줄씩 출력해라" < /dev/null
 ```
 
 skill 7개 + command 3개, 총 10줄이 나오면 정상이다.
 
-설치 후 대상 저장소에서 `/sdlc-init`을 실행하면 `templates/`의 `CLAUDE.md.template`·`REVIEW.md`·`ops/`를 저장소 루트에 깔고(기존 파일은 덮어쓰지 않음) `CLAUDE.md`의 명령어 칸을 채운다.
+설치 후 대상 저장소에서 `/sdlc-init`을 실행하면 `templates/`의 `CLAUDE.md.template`을 `.claude/CLAUDE.md`로, `REVIEW.md`·`ops/`를 저장소 루트에 깔고(기존 파일은 덮어쓰지 않음) `.claude/CLAUDE.md`의 명령어 칸을 채운다.
 
 ## skills (7개)
 
@@ -88,7 +89,7 @@ skill 7개 + command 3개, 총 10줄이 나오면 정상이다.
 승인된 intent.md를 읽어 `docs/spec/<ticket-id>.md`(요구사항 + 설계)를 만든다. `docs/intent/<id>.md`가 없거나
 미승인 상태면 `sdlc-intent`부터 완료하라고 안내하고 멈춘다.
 
-- **hard rule**: 저장소의 skills/가이드라인(`.claude/skills/`, 플러그인 skills, CLAUDE.md 컨벤션)을 찾아
+- **hard rule**: 저장소의 skills/가이드라인(`.claude/skills/`, 플러그인 skills, `CLAUDE.md`·`.claude/CLAUDE.md` 컨벤션)을 찾아
   적용한다. 정책과 충돌하는 지점은 문서 다른 곳에 모으지 않고 **해당 설계 항목 바로 아래 인라인**으로
   표시한다 — 리뷰어가 스펙만 훑어도 놓치지 않게 하기 위함이다. spec.md도 사람 검토 후 커밋되어야
   `sdlc-plan`으로 넘어간다.
@@ -277,7 +278,7 @@ Read/Bash로 찾는다. 캡처한 스냅샷을 spec.md 요구사항, plan.md 성
 
 ### `/sdlc-init`
 
-현재 저장소에 `templates/`의 `CLAUDE.md`·`REVIEW.md`·`ops/bands.yaml`·`ops/detect.sh`를 깐다. 이미 있는 파일은 건너뛰고, `package.json`/`Makefile`/`pyproject.toml`에서 명령어를 찾아 `CLAUDE.md`를 채우며, 확신이 없는 칸은 `<확인 필요>`로 남긴다. 커밋은 사람에게 맡긴다.
+현재 저장소에 `templates/`의 `CLAUDE.md`(→ `.claude/CLAUDE.md`)·`REVIEW.md`·`ops/bands.yaml`·`ops/detect.sh`를 깐다. SDLC용 `CLAUDE.md`를 `.claude/` 아래에 두는 이유는 루트에 팀 `CLAUDE.md`가 이미 있어도 건너뛰지 않기 위해서다 — Claude Code는 둘 다 읽는다. 이미 있는 파일은 건너뛰고, `package.json`/`Makefile`/`pyproject.toml`에서 명령어를 찾아 `.claude/CLAUDE.md`를 채우며, 확신이 없는 칸은 `<확인 필요>`로 남긴다. 커밋은 사람에게 맡긴다.
 
 ### `/sdlc-run <ticket-id>`
 
@@ -314,7 +315,7 @@ Done으로 옮겨야 하는지가 그 카드 코멘트에 적힌다), 06이 후�
 
 ## templates/CLAUDE.md.template
 
-설치 후 저장소 루트에 `CLAUDE.md`로 복사해 채우는 템플릿이다(`명령어`/`컨벤션`/`아키텍처`/`반복된 실수`/
+`/sdlc-init`이 `.claude/CLAUDE.md`로 복사해 채우는 템플릿이다(`명령어`/`컨벤션`/`아키텍처`/`반복된 실수`/
 `AI-native SDLC 참고` 섹션으로 구성). 원문 규칙을 그대로 따른다: **CLAUDE.md는 저장소 컨텍스트를 담는
 곳이지 매뉴얼이 아니다** — 템플릿 길이 정도의 1페이지 안에서 유지한다.
 
@@ -322,20 +323,21 @@ Done으로 옮겨야 하는지가 그 카드 코멘트에 적힌다), 06이 후�
 끝낸다). 그리고 **세 번째부터는 문서화 대신 훅으로 격상하는 걸 고려한다** — 문서로 두 번 알려줬는데도
 반복되면 CLAUDE.md는 강제력이 없는 계층이므로, 결정론적으로 막는 훅으로 옮기는 편이 낫다는 판단이다.
 
-실제로 채워 넣은 예시는 `AI_SDLC/demo/CLAUDE.md`다. 그 `반복된 실수` 섹션에는 이 컨벤션이 실제로 적용된
-사례 두 개가 있다 — `ego-browser`의 `cliLog()`가 stdout이 아니라 stderr로 출력해 `2>&1` 없이는 스냅샷이
-조용히 사라지는 문제, 그리고 `DEMO_STRICT_VALIDATION`을 shell에서 바꿔도 이미 떠 있는 `uvicorn --reload`
-프로세스에는 반영되지 않아 `make dev`를 재시작해야 하는 문제. 둘 다 "두 번 겪고 나서야" 적었다고 명시되어
-있다.
+`AI_SDLC/todo-app`에서 플러그인을 설치하고 `/sdlc-init`을 실행하면 `AI_SDLC/todo-app/.claude/CLAUDE.md`에
+실제로 채워 넣은 예시가 생긴다(이 파일은 저장소에 커밋돼 있지 않다 — 직접 만들어 보라는 것이다). 그
+`반복된 실수` 섹션에는 이 컨벤션이 실제로 적용된
+사례들이 있다 — `ego-browser`의 `cliLog()`가 stdout이 아니라 stderr로 출력해 `2>&1` 없이는 스냅샷이
+조용히 사라지는 문제, 그리고 node 서버는 코드를 바꿔도 자동으로 다시 뜨지 않아 `npm run dev`를 재시작해야 하는
+문제(그 밖에 세션의 파일 쓰기 권한은 `Write(...)`가 아니라 `Edit(...)` 규칙으로 건다는 항목도 있다).
 
 ## 직접 확인해보기
 
 아래는 실제로 실행해 검증한 명령과 결과다.
 
-**skill 로딩 확인** (`AI_SDLC/demo`가 로컬 마켓플레이스로 이 플러그인을 등록해둔 상태):
+**skill 로딩 확인** (`AI_SDLC/todo-app`이 로컬 마켓플레이스로 이 플러그인을 등록해둔 상태):
 
 ```bash
-cd AI_SDLC/demo && claude -p "네가 쓸 수 있는 sdlc-* 스킬 이름만 한 줄씩 출력해라" < /dev/null
+cd AI_SDLC/todo-app && claude -p "네가 쓸 수 있는 sdlc-* 스킬 이름만 한 줄씩 출력해라" < /dev/null
 ```
 
 실제 출력(10줄 — skill 7개 + command 3개):

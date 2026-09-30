@@ -11,7 +11,7 @@
 - [https://zoetrope.furkankly.dev/](https://zoetrope.furkankly.dev/) 로 시각화해서 내 SDLC가 어떻게 흐르는지 시각화해서 사람이 볼 수 있는 페이지도 제공할 것.
 
 - 모든 단계가 생성이 완료되었다면, 시연을 위한 작은 프로젝트를 생성하고 - 내가 어떻게 다른 사람들에게 이것을 시연하면 좋을지 시나리오를 작성해줘.
-  - React vite - Fastapi 스택으로 가볍게 만들어줄 것. 
+  - React vite + Node API 서버 스택으로 가볍게 만들어줄 것 (구현: `AI_SDLC/todo-app/`). 
   - 실제로 작은 에러로 인해 Ticket 이 자동 생성되고 거기서 intent.md가 생성되고 SDLC가 흘러가는지 zoetrope로 볼 수 있도록 해줄 것.
 
 
