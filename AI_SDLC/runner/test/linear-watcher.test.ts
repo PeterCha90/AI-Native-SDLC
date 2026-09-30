@@ -262,8 +262,61 @@ test("stop() clears the timer so start()'d polling does not continue", async () 
   watcher.start();
   await new Promise((r) => setTimeout(r, 30));
   watcher.stop();
+  // clearInterval() above is synchronous, so no *new* tick can start from here on.
+  // But a tick that fired just before stop() may still be mid-poll (e.g. inside the
+  // readState() await, before it has even called listRecentIssues yet) — awaiting
+  // idle() here, rather than just snapshotting pollCount immediately, is what makes
+  // this deterministic instead of racing that in-flight poll against the snapshot.
+  await watcher.idle();
   const countAfterStop = pollCount;
   await new Promise((r) => setTimeout(r, 30));
 
   assert.equal(pollCount, countAfterStop, "no further polls should happen after stop()");
+});
+
+test("start() never overlaps polls — ticks that fire while a fetch is still pending are no-ops", async () => {
+  const statePath = await tempStatePath();
+  let callCount = 0;
+  let concurrent = 0;
+  let maxConcurrent = 0;
+  let releaseFirstFetch: (() => void) | null = null;
+  const firstFetchGate = new Promise<void>((resolve) => {
+    releaseFirstFetch = resolve;
+  });
+
+  const watcher = new LinearWatcher<FakeIssue>({
+    listRecentIssues: async () => {
+      callCount++;
+      concurrent++;
+      maxConcurrent = Math.max(maxConcurrent, concurrent);
+      if (callCount === 1) {
+        await firstFetchGate; // held open by the test until we're done asserting
+      }
+      concurrent--;
+      return [];
+    },
+    statePath,
+    intervalMs: 5,
+    onNew: async () => {},
+  });
+
+  await watcher.poll(); // prime: seeds cursor, does not call listRecentIssues
+
+  watcher.start();
+  // Let many 5ms ticks elapse while the first real fetch is deliberately stuck.
+  await new Promise((r) => setTimeout(r, 50));
+
+  assert.equal(callCount, 1, "a tick firing while a fetch is in flight must not start a second one");
+  assert.equal(concurrent, 1, "exactly one listRecentIssues call should be pending");
+  assert.equal(maxConcurrent, 1, "at no point should more than one listRecentIssues call be in flight");
+
+  releaseFirstFetch!();
+  await watcher.idle(); // let the first poll finish and release the "polling" guard
+
+  await new Promise((r) => setTimeout(r, 25)); // polling may now resume
+  watcher.stop();
+  await watcher.idle();
+
+  assert.ok(callCount > 1, "polling should resume once the blocked fetch resolves");
+  assert.equal(maxConcurrent, 1, "the overlap guard must hold for the entire run, not just the blocked window");
 });

@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname } from "node:path";
 
@@ -43,6 +43,10 @@ export class LinearWatcher<T extends { id: string; createdAt: string }> {
 
   private timer: ReturnType<typeof setInterval> | null = null;
   private polling = false;
+  /** Resolves when the most recently started tick's poll() settles. Lets tests (and
+   *  callers) observe "no poll in flight" deterministically instead of racing stop()
+   *  against an in-flight readState()/listRecentIssues() that started just before it. */
+  private currentPoll: Promise<void> = Promise.resolve();
 
   constructor(o: LinearWatcherOptions<T>) {
     this.listRecentIssues = o.listRecentIssues;
@@ -71,10 +75,17 @@ export class LinearWatcher<T extends { id: string; createdAt: string }> {
     }
   }
 
+  /**
+   * Writes via a `<statePath>.tmp` + rename so a crash or concurrent reader
+   * never observes a half-written file — `rename` within the same
+   * directory is atomic on the filesystems we run on (POSIX, NTFS).
+   */
   private async writeState(state: WatchState): Promise<void> {
     await mkdir(dirname(this.statePath), { recursive: true });
     const seen = state.seen.length > MAX_SEEN ? state.seen.slice(state.seen.length - MAX_SEEN) : state.seen;
-    await writeFile(this.statePath, JSON.stringify({ cursor: state.cursor, seen }, null, 2), "utf8");
+    const tmpPath = `${this.statePath}.tmp`;
+    await writeFile(tmpPath, JSON.stringify({ cursor: state.cursor, seen }, null, 2), "utf8");
+    await rename(tmpPath, this.statePath);
   }
 
   /**
@@ -140,7 +151,8 @@ export class LinearWatcher<T extends { id: string; createdAt: string }> {
     this.timer = setInterval(() => {
       if (this.polling) return;
       this.polling = true;
-      this.poll()
+      this.currentPoll = this.poll()
+        .then(() => undefined)
         .catch((err) => this.log(`[linear-watcher] poll threw unexpectedly: ${(err as Error).message}`))
         .finally(() => {
           this.polling = false;
@@ -154,5 +166,16 @@ export class LinearWatcher<T extends { id: string; createdAt: string }> {
       clearInterval(this.timer);
       this.timer = null;
     }
+  }
+
+  /**
+   * Resolves once any poll that was already in flight (started by a `start()` tick)
+   * has settled. Does not itself start or stop anything. Intended for callers/tests
+   * that need to know "the watcher is idle right now" without guessing at wall-clock
+   * timing — e.g. call `stop()` then `await idle()` to be sure no poll is still
+   * running before inspecting state.
+   */
+  idle(): Promise<void> {
+    return this.currentPoll;
   }
 }
