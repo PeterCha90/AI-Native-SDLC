@@ -8,7 +8,7 @@
 <h1 align="center">🔁 AI-SDLC</h1>
 <h3 align="center">내 저장소에 6단계 개발 파이프라인과 승인 게이트를 거는 Claude Code 플러그인</h3>
 
-- [The AI-Native SDLC Playbook](https://claude.com/blog/the-ai-native-sdlc-playbook)을 실제로 돌아가게 만든 데모와 발표자료. 파이프라인 본체는 [`AI_SDLC/`](AI_SDLC/README.md)에 있다.
+- [The AI-Native SDLC Playbook](https://claude.com/blog/the-ai-native-sdlc-playbook)을 실제로 돌아가게 만든 플러그인과 러너. 본체는 [`AI_SDLC/`](AI_SDLC/README.md)에 있다.
 
 ---
 
@@ -23,11 +23,8 @@
 | 경로 | 내용 |
 | --- | --- |
 | [`AI_SDLC/`](AI_SDLC/README.md) | Claude Code 플러그인(6단계 스킬, hook, 승인 게이트)과 Linear로 자동 실행하는 러너, 대시보드 |
-| [`slides/`](slides/) | 개념 설명용 Remotion 애니메이션 발표자료 |
-| [`USAGE.md`](USAGE.md) | 발표자료와 파이프라인 전체 사용 설명서 |
+| [`USAGE.md`](USAGE.md) | 파이프라인 전체 사용 설명서 |
 | [`docs/`](docs/) | 원문 정리와 설계 기록 |
-
-두 부분은 독립적이다. 파이프라인은 [`AI_SDLC/README.md`](AI_SDLC/README.md)부터, 발표는 [`USAGE.md`](USAGE.md) 1장부터 보면 된다.
 
 ---
 
