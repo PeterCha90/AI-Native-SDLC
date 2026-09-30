@@ -2,13 +2,20 @@
 
 [AI-Native SDLC Playbook](https://claude.com/blog/the-ai-native-sdlc-playbook)의 6단계(Plan/Design/Build/Test/Deploy/Maintain)와
 3층 가드레일(CLAUDE.md/skills/hooks)을 자기 저장소에 그대로 적용하는 Claude Code 플러그인이다. 이 문서는 플러그인이
-실제로 담고 있는 것 — skill 7개, hook 8개, agent 2개, command 3개, `CLAUDE.md.template` 하나 — 을 산출물 종류별로
+실제로 담고 있는 것 — skill 7개, hook 8개, agent 2개, command 3개, `templates/`(CLAUDE.md·REVIEW.md·ops 템플릿) — 을 산출물 종류별로
 정리한 참조 문서다. 어떤 SDLC 단계에서 어떤 파일이 관여하는지(단계 기준 정리)는 이 문서가 아니라
 [`AI_SDLC/docs/stage-map.md`](../docs/stage-map.md)를 본다.
 
 ## 설치
 
-검증된 경로 둘.
+**권장 — CLI로 설치** (GitHub 저장소를 마켓플레이스로 등록):
+
+```bash
+claude plugin marketplace add PeterCha90/FastCampus
+claude plugin install ai-native-sdlc@ai-sdlc     # --scope project|local 로 범위 지정
+```
+
+저장소 루트의 `.claude-plugin/marketplace.json`이 `./AI_SDLC/plugin`을 `ai-native-sdlc`로 등록한다. 설치 후 Claude Code를 재시작하고, 대상 저장소에서 `/sdlc-init`으로 템플릿을 깐다. 이 저장소를 클론해 개발 중일 때는 아래 두 경로도 쓸 수 있다.
 
 **세션 한 번만 시험**:
 
@@ -52,11 +59,7 @@ cd AI_SDLC/demo && claude -p "네가 쓸 수 있는 sdlc-* 스킬 이름만 한 
 
 skill 7개 + command 3개, 총 10줄이 나오면 정상이다.
 
-설치 후 저장소 루트에 `CLAUDE.md.template`을 복사해 채운다:
-
-```
-cp $CLAUDE_PLUGIN_ROOT/CLAUDE.md.template ./CLAUDE.md
-```
+설치 후 대상 저장소에서 `/sdlc-init`을 실행하면 `templates/`의 `CLAUDE.md.template`·`REVIEW.md`·`ops/`를 저장소 루트에 깔고(기존 파일은 덮어쓰지 않음) `CLAUDE.md`의 명령어 칸을 채운다.
 
 ## skills (7개)
 
@@ -272,6 +275,10 @@ Read/Bash로 찾는다. 캡처한 스냅샷을 spec.md 요구사항, plan.md 성
 
 ## commands (3개)
 
+### `/sdlc-init`
+
+현재 저장소에 `templates/`의 `CLAUDE.md`·`REVIEW.md`·`ops/bands.yaml`·`ops/detect.sh`를 깐다. 이미 있는 파일은 건너뛰고, `package.json`/`Makefile`/`pyproject.toml`에서 명령어를 찾아 `CLAUDE.md`를 채우며, 확신이 없는 칸은 `<확인 필요>`로 남긴다. 커밋은 사람에게 맡긴다.
+
 ### `/sdlc-run <ticket-id>`
 
 티켓 하나에 대해 6단계를 순서대로 진행한다. **각 단계마다 승인 주체가 다르고, 승인 전에는 다음 단계로
@@ -299,19 +306,13 @@ Read/Bash로 찾는다. 캡처한 스냅샷을 spec.md 요구사항, plan.md 성
 있다면 세션 트랜스크립트 경로(`~/.claude/projects/<project-slug>/<session-id>.jsonl`, 가장 최근 파일은
 `ls -t ~/.claude/projects/*/*.jsonl | head -1`)도 함께 출력한다.
 
-### `/sdlc-visualize`
+진행 현황은 별도 시각화 도구 없이 두 곳에서 본다. **Linear 원 티켓 아래 게이트 하위 이슈 6개**가
+단계별 승인 현황판이고(지금 도는 단계는 하위 이슈 순서로, 게이트가 대기 중이면 어느 역할이 어느 카드를
+Done으로 옮겨야 하는지가 그 카드 코멘트에 적힌다), 06이 후속 티켓을 열면 원 티켓에 링크 코멘트가 남는다.
+러너의 Slack 봇이 켜져 있으면 같은 정보를 티켓 스레드가 실시간으로 보여준다(`AI_SDLC/README.md`의
+"3-C. Slack으로 쓰기" 참고).
 
-이 플러그인은 별도 시각화 도구를 쓰지 않는다. 러너(`AI_SDLC/runner`) 자신이 `http://localhost:3939/`에서
-파이프라인 대시보드를 서빙한다 — `curl -s localhost:3939/health`로 러너가 떠 있는지 먼저 확인한 뒤 그
-주소를 열면 된다. 대시보드는 티켓 실행(run)마다 카드 하나, 카드 안에 7개 컬럼(00 Setup, 01 Plan … 06
-Maintain)과 각 컬럼 아래 승인 게이트 칩(승인자 역할, 승인 대기/승인/반려/자동 승인, Linear 게이트 하위
-이슈 링크)을 보여준다. 지금 도는 단계는 하이라이트되고, 게이트가 대기 중이면 어느 역할이 어느 Linear
-카드를 Done으로 옮겨야 하는지 그대로 적힌다. 06이 후속 티켓을 열면 "↺ 06 → 새 티켓 → 01"로 새 실행의
-카드에 링크된다. 대시보드가 읽는 원본은 `GET /api/runs`이고, 그 데이터는 `docs/intent/`, `docs/spec/`,
-`docs/plan/` 같은 문서 산출물이 아니라 `runner/.state/` 아래 단계 로그·게이트 맵·라이브 상태·메타
-파일이다. 세션 `.jsonl` 경로는 "세션 로그"로 대시보드에 함께 표시되지만 디버깅용 참고 정보일 뿐이다.
-
-## CLAUDE.md.template
+## templates/CLAUDE.md.template
 
 설치 후 저장소 루트에 `CLAUDE.md`로 복사해 채우는 템플릿이다(`명령어`/`컨벤션`/`아키텍처`/`반복된 실수`/
 `AI-native SDLC 참고` 섹션으로 구성). 원문 규칙을 그대로 따른다: **CLAUDE.md는 저장소 컨텍스트를 담는
@@ -340,9 +341,9 @@ cd AI_SDLC/demo && claude -p "네가 쓸 수 있는 sdlc-* 스킬 이름만 한 
 실제 출력(10줄 — skill 7개 + command 3개):
 
 ```
+ai-native-sdlc:sdlc-init
 ai-native-sdlc:sdlc-run
 ai-native-sdlc:sdlc-status
-ai-native-sdlc:sdlc-visualize
 ai-native-sdlc:sdlc-intent
 ai-native-sdlc:sdlc-spec
 ai-native-sdlc:sdlc-plan

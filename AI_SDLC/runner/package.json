@@ -10,13 +10,13 @@
   "scripts": {
     "start": "node --experimental-strip-types src/index.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test test/*.test.ts",
-    "seed:demo": "node --experimental-strip-types scripts/seed-demo-state.ts .state-demo",
-    "dashboard:serve": "node --experimental-strip-types src/dashboard-server.ts --state .state-demo",
-    "dashboard:demo": "npm run seed:demo && npm run dashboard:serve"
+    "test": "node --experimental-strip-types --test test/*.test.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "typescript": "^5.7.0"
+  },
+  "dependencies": {
+    "@slack/bolt": "^5.1.0"
   }
 }

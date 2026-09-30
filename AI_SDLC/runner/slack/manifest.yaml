@@ -1,0 +1,33 @@
+display_information:
+  name: AI-SDLC
+  description: Linear 티켓 알림과 6단계 파이프라인 승인 게이트를 Slack에서 처리한다.
+  background_color: "#4a154b"
+features:
+  bot_user:
+    display_name: AI-SDLC
+    always_online: true
+  slash_commands:
+    - command: /sdlc
+      description: AI-SDLC 파이프라인을 시작하거나 상태를 확인한다.
+      usage_hint: "<제목> | run <키> | status | help"
+      should_escape: false
+oauth_config:
+  scopes:
+    bot:
+      - chat:write
+      - commands
+      - usergroups:read
+      - users:read
+      - channels:history
+      - groups:history
+      - users:read.email
+settings:
+  event_subscriptions:
+    bot_events:
+      - message.channels
+      - message.groups
+  interactivity:
+    is_enabled: true
+  org_deploy_enabled: false
+  socket_mode_enabled: true
+  token_rotation_enabled: false

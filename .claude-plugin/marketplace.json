@@ -1,0 +1,15 @@
+{
+  "name": "ai-sdlc",
+  "owner": {
+    "name": "Peter Cha",
+    "url": "https://github.com/PeterCha90"
+  },
+  "description": "AI-native SDLC 6단계 파이프라인과 승인 게이트를 담은 Claude Code 플러그인 마켓플레이스.",
+  "plugins": [
+    {
+      "name": "ai-native-sdlc",
+      "source": "./AI_SDLC/plugin",
+      "description": "AI-native SDLC 6단계(Plan/Design/Build/Test/Deploy/Maintain)와 3층 가드레일(CLAUDE.md/skills/hooks)."
+    }
+  ]
+}

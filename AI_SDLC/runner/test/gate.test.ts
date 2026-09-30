@@ -34,6 +34,15 @@ function fakeSource(states: StateType[], comments: IssueComment[] = []): TicketS
     },
     getStateType: async () => states[Math.min(i++, states.length - 1)],
     listComments: async () => comments,
+    setStateType: async () => {
+      throw new Error("unused");
+    },
+    listRecentIssues: async () => {
+      throw new Error("unused");
+    },
+    getTicket: async () => {
+      throw new Error("unused");
+    },
   };
 }
 

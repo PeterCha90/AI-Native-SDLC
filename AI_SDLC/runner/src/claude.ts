@@ -17,6 +17,8 @@ export interface RunStageOptions {
   timeoutMs?: number;
   /** Default "bypassPermissions" — this runner is unattended, there's no one to answer prompts. */
   permissionMode?: string;
+  /** When set, resumes this existing session (`--resume <id>`) instead of starting a new one with `--session-id`. */
+  resumeSessionId?: string;
 }
 
 export interface StageResult {
@@ -27,7 +29,33 @@ export interface StageResult {
   stderr: string;
   /** Absolute path to the JSONL session transcript, kept for debugging, or null if it was never found. */
   sessionJsonlPath: string | null;
+  /** The session ID this run used — `resumeSessionId` when resuming, otherwise the freshly generated one. */
+  sessionId: string;
   error?: string;
+}
+
+/**
+ * Pure arg-builder for `claude -p`, split out of `runStage` so the resume/new-session branching
+ * can be tested without spawning a process. `sessionId` is the freshly generated ID to use for a
+ * new session; it's ignored (in favor of `opts.resumeSessionId`) when resuming.
+ */
+export function buildClaudeArgs(opts: RunStageOptions, sessionId: string): string[] {
+  const args = ["-p", opts.prompt, "--output-format", "stream-json", "--verbose"];
+  if (opts.resumeSessionId) {
+    args.push("--resume", opts.resumeSessionId);
+  } else {
+    args.push("--session-id", sessionId);
+  }
+  args.push("--permission-mode", opts.permissionMode ?? "bypassPermissions");
+  if (opts.allowedTools?.length) {
+    args.push("--allowedTools", opts.allowedTools.join(" "));
+  }
+  // Loads the plugin for this session only, so a stage gets the sdlc-* skills, the
+  // hook layer and the subagents without the repo having to install anything first.
+  if (opts.pluginDir) {
+    args.push("--plugin-dir", opts.pluginDir);
+  }
+  return args;
 }
 
 /** `/Users/x/y` -> `-Users-x-y`, matching Claude Code's ~/.claude/projects/<slug> naming. */
@@ -41,17 +69,13 @@ export function sessionsDirFor(cwd: string): string {
 
 /** Runs one pipeline stage as a headless `claude -p` session. Never throws — failures come back as ok:false. */
 export async function runStage(opts: RunStageOptions): Promise<StageResult> {
-  const sessionId = randomUUID();
+  const generatedSessionId = randomUUID();
+  // The session ID this run actually uses: the resumed one when resuming, otherwise the freshly
+  // generated one. Also what we look up the JSONL transcript by, since Claude Code keeps writing
+  // a resumed session's transcript under its original session ID.
+  const sessionId = opts.resumeSessionId ?? generatedSessionId;
   const timeoutMs = opts.timeoutMs ?? 20 * 60 * 1000;
-  const args = ["-p", opts.prompt, "--output-format", "stream-json", "--verbose", "--session-id", sessionId, "--permission-mode", opts.permissionMode ?? "bypassPermissions"];
-  if (opts.allowedTools?.length) {
-    args.push("--allowedTools", opts.allowedTools.join(" "));
-  }
-  // Loads the plugin for this session only, so a stage gets the sdlc-* skills, the
-  // hook layer and the subagents without the repo having to install anything first.
-  if (opts.pluginDir) {
-    args.push("--plugin-dir", opts.pluginDir);
-  }
+  const args = buildClaudeArgs(opts, generatedSessionId);
 
   const result = await new Promise<StageResult>((resolvePromise) => {
     let child: ChildProcessWithoutNullStreams;
@@ -65,6 +89,7 @@ export async function runStage(opts: RunStageOptions): Promise<StageResult> {
         stdout: "",
         stderr: "",
         sessionJsonlPath: null,
+        sessionId,
         error: `failed to spawn claude: ${(err as Error).message}`,
       });
       return;
@@ -92,6 +117,7 @@ export async function runStage(opts: RunStageOptions): Promise<StageResult> {
         stdout,
         stderr,
         sessionJsonlPath: null,
+        sessionId,
         error: `claude process error: ${err.message}`,
       });
     });
@@ -106,6 +132,7 @@ export async function runStage(opts: RunStageOptions): Promise<StageResult> {
         stdout,
         stderr,
         sessionJsonlPath: existsSync(sessionJsonlPath) ? sessionJsonlPath : null,
+        sessionId,
       });
     });
   });
