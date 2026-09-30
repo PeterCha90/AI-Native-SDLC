@@ -166,12 +166,16 @@ export function parseSdlcCommand(text: string): SdlcCommand {
 }
 
 /**
- * Pure predicate behind the "▶ 시작" button's double-click guard: block when this key was
- * already marked started by a previous click, or when its pipeline run is already active.
+ * Pure predicate behind the "▶ 시작" button's (and `/sdlc run`'s) double-click guard: block only
+ * when this key is already active — `isRunActive` now covers a run from the moment it's queued
+ * (not just once it starts executing; see `enqueueTicket` in index.ts), so there's no separate
+ * "started" bookkeeping to leak across a run's lifetime. A finished or aborted run is no longer
+ * active, so starting it again is allowed — that's the whole point of "이 실행은 중단됐다 —
+ * /sdlc run <키>로 다시 시작한다".
  * Exported (and kept trivial) so it's cheaply unit-testable without standing up a Bolt app.
  */
-export function shouldBlockDoubleStart(key: string, startedKeys: ReadonlySet<string>, isRunActive: (key: string) => boolean): boolean {
-  return startedKeys.has(key) || isRunActive(key);
+export function shouldBlockDoubleStart(key: string, isRunActive: (key: string) => boolean): boolean {
+  return isRunActive(key);
 }
 
 const HELP_TEXT = [
@@ -189,7 +193,11 @@ export interface StartSlackAppOptions {
   source: TicketSource;
   stateDir: string;
   runnerDir: string;
-  /** Queues a pipeline run, returning its 1-based position in the queue. */
+  /**
+   * Queues a pipeline run, returning its 1-based position in the queue — or `0` if this
+   * ticket's key is already active (queued or running), in which case nothing new was enqueued
+   * and the caller should tell the user "이미 시작됨" rather than post a queue-position message.
+   */
   enqueue: (t: Ticket) => number;
   isRunActive: (key: string) => boolean;
   /**
@@ -261,25 +269,25 @@ export async function startSlackApp(
     gateRoles: o.config.gateRoles,
   };
 
-  // Keys whose "▶ 시작" click (or `/sdlc run`) has already been accepted — guards a double click
-  // that arrives before the first click's own message update (or queue position) lands. See
-  // `shouldBlockDoubleStart`.
-  const startedKeys = new Set<string>();
-
   app.action(ACTIONS.start, async ({ ack, body, client: actionClient }) => {
     await ack();
     const b = body as any;
     const value: ActionValue = JSON.parse(b.actions[0].value);
     const userId: string = b.user.id;
-    if (shouldBlockDoubleStart(value.key, startedKeys, o.isRunActive)) {
+    if (shouldBlockDoubleStart(value.key, o.isRunActive)) {
       await actionClient.chat.postEphemeral({ channel: b.channel.id, user: userId, text: "이미 시작됨" });
       return;
     }
-    startedKeys.add(value.key);
     try {
       const ticket = await o.source.getTicket(value.key);
       await notifier.markStarted(value.key, userId);
       const position = o.enqueue(ticket);
+      if (position === 0) {
+        // Raced: became active between the check above and this enqueue call (e.g. two clicks
+        // landed close enough together). `enqueue` itself is the source of truth here.
+        await actionClient.chat.postEphemeral({ channel: b.channel.id, user: userId, text: "이미 시작됨" });
+        return;
+      }
       if (position > 1) {
         const rec = await readThread(o.stateDir, value.key);
         if (rec) {
@@ -291,7 +299,6 @@ export async function startSlackApp(
         }
       }
     } catch (err) {
-      startedKeys.delete(value.key); // let the operator retry after a real failure
       await actionClient.chat.postEphemeral({ channel: b.channel.id, user: userId, text: `시작 실패: ${(err as Error).message}` });
     }
   });
@@ -372,20 +379,22 @@ export async function startSlackApp(
         return;
       }
       case "run": {
-        if (shouldBlockDoubleStart(parsed.key, startedKeys, o.isRunActive)) {
+        if (shouldBlockDoubleStart(parsed.key, o.isRunActive)) {
           await respond({ response_type: "ephemeral", text: "이미 시작됨" });
           return;
         }
-        startedKeys.add(parsed.key);
         try {
           const ticket = await o.source.getTicket(parsed.key);
           await notifier.markStarted(ticket.key, command.user_id);
           const position = o.enqueue(ticket);
+          if (position === 0) {
+            await respond({ response_type: "ephemeral", text: "이미 시작됨" });
+            return;
+          }
           if (position > 1) {
             await respond({ response_type: "ephemeral", text: `대기열 ${position}번째 — 앞선 실행이 끝나면 시작한다` });
           }
         } catch (err) {
-          startedKeys.delete(parsed.key);
           await respond({ response_type: "ephemeral", text: `시작 실패: ${(err as Error).message}` });
         }
         return;

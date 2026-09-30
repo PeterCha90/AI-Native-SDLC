@@ -29,8 +29,9 @@ function json(res: ServerResponse, status: number, body: unknown): void {
 
 // Serializes pipeline runs to exactly one at a time — a demo runner has no need for concurrency,
 // and it keeps "what's running right now" (.state/*.live.json) unambiguous: one active session
-// at a time.
-class Queue {
+// at a time. Exported so test/slack-actions.test.ts can exercise `createIdempotentEnqueuer`
+// below against a real Queue rather than a fake.
+export class Queue {
   private tasks: Array<() => Promise<void>> = [];
   private running = false;
 
@@ -65,6 +66,34 @@ class Queue {
   }
 }
 
+/**
+ * Wraps a `Queue` with per-key idempotency: a key already active (queued or running) is not
+ * enqueued a second time — `enqueue` returns `0` and `runOne` is never called for it. A key
+ * becomes active the instant it's enqueued (before it waits in the queue, not once the queue
+ * gets around to running it) and stays active until `runOne` settles, success or failure — so a
+ * finished or aborted run is no longer active and CAN be started again. This is what backs
+ * `isRunActive` everywhere in this module (the webhook handler, the Slack "▶ 시작" button,
+ * `/sdlc run`, and auto-start all go through the one `enqueue` this returns).
+ *
+ * Exported (and generic, no dependency on `Ticket` beyond `key`/`id`) so it's unit-testable with
+ * a fake `runOne` and a real `Queue`, without standing up the HTTP server or Slack.
+ */
+export function createIdempotentEnqueuer<T extends { key: string; id: string }>(
+  queue: Queue,
+  runOne: (t: T) => Promise<void>,
+): { enqueue: (t: T) => number; isActive: (key: string) => boolean } {
+  const activeKeys = new Set<string>();
+  return {
+    isActive: (key: string) => activeKeys.has(key),
+    enqueue: (t: T): number => {
+      const key = t.key || t.id;
+      if (activeKeys.has(key)) return 0;
+      activeKeys.add(key);
+      return queue.enqueue(() => runOne(t).finally(() => activeKeys.delete(key)));
+    },
+  };
+}
+
 export function startServer(): void {
   const config = loadConfig();
   const source = createTicketSource(config);
@@ -90,23 +119,20 @@ export function startServer(): void {
     });
   }
 
-  // Which keys currently have a live `runPipeline` call in flight (as opposed to merely having
-  // `.state/*` files on disk from a run the runner no longer remembers — see gate.ts's
-  // "runner restarted" note). Populated only for the duration of runTicket below.
-  const activeKeys = new Set<string>();
-  const isRunActive = (key: string): boolean => activeKeys.has(key);
-
   // Set once Slack starts (if it does) — declared here so the LinearWatcher's onNew closure and
   // the Slack app's markTicketSeen closure can both refer to it without a startup-order dependency.
   let events: PipelineEvents = noopEvents;
   let slackNotifier: ReturnType<typeof createSlackNotifier> | null = null;
   let watcher: LinearWatcher<RecentIssue> | null = null;
 
-  function runTicket(ticket: Ticket): Promise<void> {
-    const key = ticket.key || ticket.id;
-    activeKeys.add(key);
-    return runPipeline(ticket, config, source, RUNNER_DIR, events).finally(() => activeKeys.delete(key));
-  }
+  // `isRunActive` covers a key from the moment it's enqueued (queued and waiting, not just once
+  // it starts executing) through to `runPipeline` settling — a finished or aborted run is no
+  // longer active and CAN be started again (`/sdlc run <키>`, or a fresh "▶ 시작" click), matching
+  // the gate note "이 실행은 중단됐다 — /sdlc run <키>로 다시 시작한다". `events` is read lazily inside
+  // the closure below (not captured at this point), so it sees whatever Slack sets it to later.
+  const { enqueue: enqueueTicket, isActive: isRunActive } = createIdempotentEnqueuer<Ticket>(queue, (ticket) =>
+    runPipeline(ticket, config, source, RUNNER_DIR, events),
+  );
 
   async function setupNotifications(): Promise<void> {
     if (config.slack) {
@@ -115,7 +141,7 @@ export function startServer(): void {
         source,
         stateDir,
         runnerDir: RUNNER_DIR,
-        enqueue: (ticket) => queue.enqueue(() => runTicket(ticket)),
+        enqueue: enqueueTicket,
         isRunActive,
         markTicketSeen: async (id: string) => {
           if (watcher) await watcher.markSeen(id);
@@ -144,7 +170,7 @@ export function startServer(): void {
           if (!slackNotifier) return; // Slack configured but not yet connected (or failed to connect) — nothing to post to yet
           const startMode = config.slack?.startMode ?? "button";
           await slackNotifier.postTicketNotice(t, startMode === "auto" ? "auto" : "new");
-          if (startMode === "auto") queue.enqueue(() => runTicket(t));
+          if (startMode === "auto") enqueueTicket(t);
         },
       });
       watcher.start();
@@ -175,7 +201,7 @@ export function startServer(): void {
           json(res, 200, { ignored: true });
           return;
         }
-        queue.enqueue(() => runTicket(ticket));
+        enqueueTicket(ticket);
         json(res, 202, { queued: true, key: ticket.key });
         return;
       }

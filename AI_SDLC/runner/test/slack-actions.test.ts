@@ -8,6 +8,7 @@ import { createSlackNotifier, type SlackClientLike } from "../src/slack/notifier
 import { RoleChecker } from "../src/slack/roles.ts";
 import { readThread, writeThread, type ThreadRecord } from "../src/slack/threads.ts";
 import { STAGES, type StageId } from "../src/gate.ts";
+import { Queue, createIdempotentEnqueuer } from "../src/index.ts";
 import type { IssueComment, NewTicket, RecentIssue, StateType, Ticket, TicketSource } from "../src/adapters/types.ts";
 
 // ── test fixtures ────────────────────────────────────────────────────────────
@@ -402,18 +403,76 @@ test("isSlackStartupRejection: a non-Error rejection reason is NOT recognised as
 
 // ── shouldBlockDoubleStart ───────────────────────────────────────────────────
 
-test("shouldBlockDoubleStart: neither started nor active -> false", () => {
-  assert.equal(shouldBlockDoubleStart("ENG-1", new Set(), () => false), false);
+test("shouldBlockDoubleStart: not active -> false", () => {
+  assert.equal(shouldBlockDoubleStart("ENG-1", () => false), false);
 });
 
-test("shouldBlockDoubleStart: already in the started-keys set -> true", () => {
-  assert.equal(shouldBlockDoubleStart("ENG-1", new Set(["ENG-1"]), () => false), true);
+test("shouldBlockDoubleStart: active -> true", () => {
+  assert.equal(shouldBlockDoubleStart("ENG-1", (key: string) => key === "ENG-1"), true);
 });
 
-test("shouldBlockDoubleStart: already run-active -> true, even if not in the started-keys set", () => {
-  assert.equal(shouldBlockDoubleStart("ENG-1", new Set(), (key) => key === "ENG-1"), true);
+test("shouldBlockDoubleStart: a different key being active does not block this one", () => {
+  assert.equal(shouldBlockDoubleStart("ENG-2", (key: string) => key === "ENG-1"), false);
 });
 
-test("shouldBlockDoubleStart: a different key in the started-keys set does not block this one", () => {
-  assert.equal(shouldBlockDoubleStart("ENG-2", new Set(["ENG-1"]), () => false), false);
+// ── createIdempotentEnqueuer ─────────────────────────────────────────────────
+// Fix round 2: `activeKeys` used to be set only once a queued task actually started executing,
+// so (a) a finished run's key stayed blocked forever (no separate "started" bookkeeping was ever
+// cleared) and (b) two starts for a key still waiting in line both looked "not active yet" and
+// could both be queued. These tests exercise the real `Queue` together with
+// `createIdempotentEnqueuer`, the way index.ts actually wires `enqueue`/`isRunActive`.
+
+test("createIdempotentEnqueuer: a key is active again as soon as its run completes, so starting it again is accepted (not blocked forever)", async () => {
+  const queue = new Queue();
+  let runCount = 0;
+  const { enqueue, isActive } = createIdempotentEnqueuer<{ key: string; id: string }>(queue, async () => {
+    runCount++;
+  });
+  const ticket = { key: "ENG-1", id: "t-1" };
+
+  const firstPosition = enqueue(ticket);
+  assert.equal(firstPosition, 1, "first enqueue starts right away");
+  assert.equal(isActive("ENG-1"), true);
+
+  await new Promise((r) => setTimeout(r, 10)); // let the queue actually finish draining this run
+
+  assert.equal(isActive("ENG-1"), false, "the key must no longer be active once the run settles");
+  assert.equal(runCount, 1);
+
+  const secondPosition = enqueue(ticket);
+  assert.notEqual(secondPosition, 0, "starting the same key again after completion must be accepted, not rejected as a duplicate");
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(runCount, 2, "runOne must actually run a second time");
+});
+
+test("createIdempotentEnqueuer: two starts for the same key while the first is still waiting in the queue -> only one enqueue happens", async () => {
+  const queue = new Queue();
+  const runCalls: string[] = [];
+  let resolveBlocker: () => void = () => {};
+  const blocker = new Promise<void>((r) => {
+    resolveBlocker = r;
+  });
+
+  const { enqueue, isActive } = createIdempotentEnqueuer<{ key: string; id: string }>(queue, async (t) => {
+    runCalls.push(t.key);
+    if (t.key === "BLOCKER") await blocker;
+  });
+
+  // Occupy the queue's one execution slot with an unrelated, slow run, so the next ticket has to
+  // wait in line rather than start running immediately.
+  enqueue({ key: "BLOCKER", id: "b-1" });
+
+  const ticket = { key: "ENG-3", id: "t-3" };
+  const firstPosition = enqueue(ticket); // queued behind BLOCKER — not yet running
+  const secondPosition = enqueue(ticket); // duplicate start while ENG-3 is still only queued
+
+  assert.equal(firstPosition, 2, "ENG-3 is second in line, behind BLOCKER");
+  assert.equal(secondPosition, 0, "a duplicate start for a key that's still only queued must be rejected, not queued again");
+  assert.equal(isActive("ENG-3"), true);
+
+  resolveBlocker();
+  await new Promise((r) => setTimeout(r, 10));
+
+  assert.equal(runCalls.filter((k) => k === "ENG-3").length, 1, "ENG-3's runOne must run exactly once");
+  assert.equal(isActive("ENG-3"), false);
 });
