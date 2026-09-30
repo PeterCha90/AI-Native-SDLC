@@ -18,9 +18,14 @@ oauth_config:
       - commands
       - usergroups:read
       - users:read
+      - channels:history
+      - groups:history
+      - users:read.email
 settings:
   event_subscriptions:
-    bot_events: []
+    bot_events:
+      - message.channels
+      - message.groups
   interactivity:
     is_enabled: true
   org_deploy_enabled: false

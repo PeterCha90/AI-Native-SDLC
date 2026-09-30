@@ -11,6 +11,24 @@ lines and gate buttons in real time. `06 maintain` closes the loop: if tests or
 deploy fail, it opens a new Linear ticket (labeled `sdlc-auto`) with a failure
 summary and a link back to the original ticket, which re-triggers `01 intent`.
 
+Two loops sit on top of the base pipeline (see `AI_SDLC/README.md#3-c-slack으로-쓰기`
+for the Slack-facing walkthrough):
+
+- **01 Plan interview.** If `01 intent`'s draft leaves a `## 미해결 질문` section
+  with open questions (parsed deterministically, no model involved), the
+  runner asks the requester in the Slack thread instead of opening the
+  `01-plan` gate right away. Thread replies get collected; `[답변 반영]` feeds
+  them back into the same `claude -p --resume` session to revise `intent.md`,
+  `[이대로 진행]` proceeds with whatever is still unanswered. Capped at
+  `interviewMaxRounds` (default 5) rounds; with Slack off or in webhook mode,
+  it's skipped entirely.
+- **Rejection rework (01/02/03 gates only).** Rejecting `01-plan`, `02-design`,
+  or `03-build` (with a reason, from the Slack modal or a Linear comment) no
+  longer stops the pipeline — the runner resumes that stage's session with
+  the rejection reason and re-runs it, up to `reworkMaxAttempts` (default 3)
+  times per gate, then reopens the gate. `04-test`/`05-deploy`/`06-maintain`
+  rejections still stop the pipeline as before.
+
 No GitHub Actions involved — this is a local Node daemon. No public URL is
 required either: Slack connects over Socket Mode and Linear is polled (or, if
 you keep the webhook wired up, pushed to `POST /webhook/linear`).
@@ -52,6 +70,8 @@ is missing, the Slack bot stays off and the runner behaves exactly as before
 | `slack.channelId` | — | The Slack channel (`C…`) the bot posts to. |
 | `slack.startMode` | `"button"` | `"button"` waits for a human to press ▶ Start; `"auto"` starts as soon as the notification posts. |
 | `slack.roleGroups` | `{}` | Maps a gate role name (e.g. `"Product Owner"`) to a Slack user group ID (`S…`). Unmapped roles can be approved by anyone in the channel. |
+| `interviewMaxRounds` | `5` | Max round-trips in the 01 Plan interview loop before it behaves like `[이대로 진행]`. |
+| `reworkMaxAttempts` | `3` | Max times a rejected `01-plan`/`02-design`/`03-build` gate re-runs its stage before the pipeline stops. |
 
 ## Run
 
@@ -85,8 +105,12 @@ the two tokens, invite it to a channel, find user group IDs). In short:
 
 - `slack/manifest.yaml` is the app manifest a team pastes into
   **api.slack.com/apps → Create New App → From a manifest**. It declares the
-  `/sdlc` slash command, Socket Mode, interactivity, and the bot scopes
-  (`chat:write`, `commands`, `usergroups:read`, `users:read`).
+  `/sdlc` slash command, Socket Mode, interactivity, the bot scopes
+  (`chat:write`, `commands`, `usergroups:read`, `users:read`, plus
+  `channels:history`, `groups:history`, `users:read.email` for the interview
+  loop), and the `message.channels`/`message.groups` event subscriptions used
+  to collect thread replies. Existing installs must re-paste the manifest and
+  reinstall the app for the new scopes to take effect.
 - `src/events.ts` defines `PipelineEvents`, the interface `runPipeline` calls
   into at each stage transition (`runStarted`, `stageStarted`,
   `stageFinished`, `gateWaiting`, `gateResolved`, `followupCreated`,
