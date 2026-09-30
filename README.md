@@ -50,7 +50,14 @@ Claude Code를 다시 시작한 뒤 내 저장소에서:
 /sdlc-run ENG-12
 ```
 
-설치 범위, 업데이트, Linear로 자동 실행하는 방법은 [`AI_SDLC/README.md`](AI_SDLC/README.md)에 순서대로 있다.
+Linear·Slack으로 자동 실행하려면 러너도 두 줄이면 된다(클론 없이):
+
+```bash
+npx ai-sdlc-runner init
+npx ai-sdlc-runner start
+```
+
+설치 범위, 업데이트, Linear·Slack으로 자동 실행하는 방법은 [`AI_SDLC/README.md`](AI_SDLC/README.md)에 순서대로 있다.
 
 ---
 

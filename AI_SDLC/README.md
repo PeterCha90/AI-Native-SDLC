@@ -173,44 +173,74 @@ Linear MCP가 연결돼 있으면 티켓 내용을 직접 읽는다. 연결돼 �
 
 ## 3-B. 자동으로 돌리기 (러너)
 
-Linear에 티켓이 생기면 러너가 webhook으로 받아 단계마다 `claude -p`를 실행한다. 승인은 Linear 카드로 한다.
+Linear에 티켓이 생기면 러너가 (기본은 30초 폴링, 필요하면 webhook으로) 받아 단계마다 `claude -p`를 실행한다. 승인은 Linear 카드로, Slack을 붙이면 채널에서도 한다.
 
 ### 설정
 
-러너는 플러그인에 들어 있지 않으니 저장소를 받는다. 위치는 어디든 괜찮다.
+클론도 `sdlc.config.json` 편집도 필요 없다. 내 저장소에서 바로 실행한다:
 
 ```bash
-git clone https://github.com/PeterCha90/FastCampus.git ~/tools/FastCampus
+cd ~/code/my-app
+npx ai-sdlc-runner init
 ```
 
-`~/tools/FastCampus/AI_SDLC/runner/sdlc.config.json`을 연다:
+이미 설정이 있으면 기존 값을 기본값으로 보여 주고 바꿀 것만 묻는다. `init`이 순서대로 묻는 것:
 
-| 설정 | 넣을 값 |
+| 순서 | 묻는 것 | 확인 방법 |
+| --- | --- | --- |
+| 1 | (자동) 지금 폴더가 git 저장소인지 | 저장소 루트를 스스로 찾는다 |
+| 2 | Slack 앱 있음 / 없음 | 없으면 매니페스트를 그 자리에 출력하고 앱 생성 페이지 URL을 안내한다 |
+| 3 | Slack 봇 토큰 (`xoxb-…`) | 가려진 입력. `auth.test`로 검증하고 워크스페이스·봇 이름을 보여 준다 |
+| 4 | Slack 앱 토큰 (`xapp-…`) | 가려진 입력. `apps.connections.open`으로 검증한다 |
+| 5 | Linear API 키 (`lin_api_…`) | 가려진 입력. 조회로 검증한 뒤 팀 목록에서 고른다 |
+| 6 | Slack 채널 | 채널 ID 또는 채널 링크를 붙여넣으면 ID를 뽑아낸다. 확인 메시지를 보내 봇이 그 채널에 있는지 검증하고, `not_in_channel`이면 `/invite` 안내 후 다시 묻는다 |
+| 7 | 승인 역할 (선택) | 역할별로 Slack 사용자 그룹을 고른다. 건너뛰면 채널 멤버 누구나 승인할 수 있다 |
+| 8 | 시작 방식 | 버튼(기본) 또는 자동 |
+| 9 | 저장소 템플릿 | `CLAUDE.md`·`REVIEW.md`·`ops/`가 없으면 설치할지 묻는다(`/sdlc-init`과 같은 파일) |
+| 10 | 저장 · 요약 | `config.json`·`credentials.json`을 저장하고 `doctor` 결과와 `npx ai-sdlc-runner start` 안내를 보여 준다 |
+
+토큰 형식이 서로 바뀌었으면(`xoxb-`↔`xapp-` 자리를 헷갈리는 흔한 실수) 접두어로 바로 알려 주고 그 단계만 다시 묻는다. 검증에 실패해도 그 단계만 재질문하고, Ctrl+C를 누르면 아무 파일도 쓰지 않는다.
+
+토큰은 각각 여기서 발급받는다:
+
+| 토큰 | 어디서 얻는지 |
 | --- | --- |
-| `repoPath` | 내 저장소 경로. 절대 경로, 또는 `runner/` 기준 상대 경로 |
-| `linearTeamId` | 티켓을 받을 Linear 팀 ID (Claude Code에서 Linear MCP의 `list_teams`로 조회) |
-| `demoAppUrl` | 04 Test에서 e2e로 열어 볼 내 앱 주소 (예: `http://localhost:3000`) |
-| `gateRoles` | 단계별 승인자 이름. 기본값은 PO / PO / Engineer / Code Owner / Release Manager / Service Owner |
+| Slack 봇 토큰 (`xoxb-`) | Slack 앱 → **Install App** / **OAuth & Permissions** → Bot User OAuth Token |
+| Slack 앱 토큰 (`xapp-`) | **Basic Information** → **App-Level Tokens** → `connections:write` 스코프로 Generate |
+| Linear API 키 (`lin_api_`) | Linear → **Settings** → **Security & access (API)** → Personal API keys |
 
-`repoPath`는 git 저장소여야 한다. 러너가 티켓마다 `sdlc/<키>` 브랜치의 worktree를 만들어 그 안에서 작업하므로, 내 작업 트리는 건드리지 않는다.
+설정은 저장소마다 따로 저장된다:
+
+```
+~/.ai-sdlc/
+└── repos/<저장소 경로 해시>/
+    ├── config.json          비밀 아닌 설정 (channelId, linearTeamId, gateRoles ...)
+    ├── credentials.json     토큰. 파일 권한 600, 폴더 권한 700
+    ├── state/               단계별 세션 기록
+    └── worktrees/           티켓마다 만드는 작업 트리
+```
+
+우선순위는 **환경변수 > `credentials.json`/`config.json` > 기본값**이다 — `SLACK_BOT_TOKEN`처럼 환경변수를 지정해 두면 저장된 토큰보다 그게 먼저 쓰인다. 기본 위치는 `~/.ai-sdlc`이고 `--home <dir>` 또는 `AI_SDLC_HOME` 환경변수로 바꿀 수 있다. 여러 저장소를 쓰면 저장소마다 `--repo <path>`(기본은 현재 폴더)로 `init`을 한 번씩 해 둔다.
+
+서버·CI라 대화형으로 못 묻는 경우엔 `init --yes`를 쓴다. `SLACK_BOT_TOKEN` 등 환경변수와 `--channel`, `--team` 플래그로 같은 검증을 거쳐 저장한다.
+
+### 명령
+
+| 명령 | 하는 일 |
+| --- | --- |
+| `doctor` | 기동 전 점검을 표로: Node 버전, `claude` 설치·로그인, Linear MCP 연결, 토큰 3개 유효성, 봇의 채널 참여, 저장소 git 여부, 템플릿 파일 유무, `ego-browser` 준비 여부 |
+| `manifest [--open]` | Slack 앱 매니페스트 YAML을 출력한다. `--open`이면 앱 생성 페이지도 연다 |
+| `config` | 현재 설정을 출력한다(토큰은 앞 8자만 보인다) |
+
+(패키지가 아직 npm에 없다면 위 명령 대신 아래 "개발자용: 소스에서 실행" 절을 본다.)
 
 ### 실행
 
 ```bash
-cd ~/tools/FastCampus/AI_SDLC/runner
-npm install
-export LINEAR_API_KEY=lin_api_...          # Linear → Settings → API → Personal API keys
-export LINEAR_WEBHOOK_SECRET=...           # 아래 webhook을 만들 때 나오는 값
-npm start
+npx ai-sdlc-runner start
 ```
 
-다른 터미널에서 러너 포트를 외부에 연다:
-
-```bash
-ngrok http 3939
-```
-
-Linear → Settings → API → Webhooks에서 `<ngrok 주소>/webhook/linear`를 추가하고 **Issue** 이벤트를 구독한다. 이때 나오는 signing secret을 `LINEAR_WEBHOOK_SECRET`에 넣고 `npm start`를 다시 실행한다. 러너는 시작할 때만 환경변수를 읽는다.
+설정·자격 증명을 읽어 기동한다. 설정이 아예 없으면 `init`부터 하라고 안내하고 종료 코드 1로 끝난다. `claude` 미설치·미로그인이나 Linear MCP 미연결처럼 막히는(blocking) 점검이 하나라도 실패하면 원인과 해결 명령을 출력하고 역시 종료 코드 1이다(`00 Setup`이 Linear MCP 없이는 못 돌기 때문). 점검을 건너뛰려면 `--skip-checks`를 붙인다. 통과하면 기동 로그에 웹훅 URL 또는 폴링 상태, 상태 파일 위치, Slack 연결 상태가 한 번에 찍힌다.
 
 ### 티켓 하나 흘려 보내기
 
@@ -227,62 +257,27 @@ Linear → Settings → API → Webhooks에서 `<ngrok 주소>/webhook/linear`�
 4. `05 Deploy`에서 `sdlc/<키>` 브랜치로 PR이 열린다.
 5. `06 Maintain`이 3σ로 판정하면 `sdlc-auto` 라벨을 단 새 티켓이 생기고, 그 티켓으로 다시 01부터 시작한다. 원 티켓에 후속 티켓 링크가 코멘트로 남는다.
 
-사람 승인 없이 흐름만 확인하려면 `SDLC_AUTO_APPROVE=1 npm start`로 켠다. 게이트를 전부 건너뛰고, 건너뛸 때마다 러너 로그에 "리허설 모드(자동 승인)"가 찍힌다.
+사람 승인 없이 흐름만 확인하려면 `SDLC_AUTO_APPROVE=1 npx ai-sdlc-runner start`로 켠다. 게이트를 전부 건너뛰고, 건너뛸 때마다 러너 로그에 "리허설 모드(자동 승인)"가 찍힌다.
 
 ---
 
 ## 3-C. Slack으로 쓰기
 
-러너가 Linear 티켓 알림과 승인 버튼을 Slack 채널에 올린다. 공개 URL이 필요 없다 — Socket Mode로 붙는다. **01 Plan 인터뷰와 스레드 답글 수집 때문에 봇 스코프가 늘었다(아래 ⑨). 기존에 이미 앱을 만들어 쓰고 있었다면 `slack/manifest.yaml`을 다시 붙여 넣고 앱을 재설치해야 한다.**
+러너가 Linear 티켓 알림과 승인 버튼을 Slack 채널에 올린다. 공개 URL이 필요 없다 — Socket Mode로 붙는다. **01 Plan 인터뷰와 스레드 답글 수집 때문에 봇 스코프가 늘었다(아래 ④). 기존에 이미 앱을 만들어 쓰고 있었다면 3-B의 `init`을 다시 돌려 매니페스트를 다시 붙여넣고 앱을 재설치해야 한다.**
 
-### 앱 만들기
+### ① 앱 만들기·설정
 
-| 순서 | 할 일 |
-| --- | --- |
-| ① | [api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → **From a manifest** → 워크스페이스 선택 → `runner/slack/manifest.yaml` 내용을 붙여넣는다 |
-| ② | **Install to Workspace** → 발급된 **Bot Token**(`xoxb-…`)을 복사한다 |
-| ③ | 왼쪽 메뉴 **Basic Information** → **App-Level Tokens** → `connections:write` 스코프로 토큰을 만들고 **App-Level Token**(`xapp-…`)을 복사한다 |
-| ④ | 알림을 받을 채널에서 `/invite @AI-SDLC`로 봇을 초대한다. 채널 상세 정보 맨 아래에서 채널 ID(`C…`)를 복사한다 |
-| ⑤ | 승인 역할마다 Slack 사용자 그룹을 만들거나 기존 그룹을 쓴다. 그룹 프로필 페이지 URL 끝의 `S…`가 사용자 그룹 ID다 |
+Slack 앱을 아직 안 만들었어도 저장소를 옮겨 다닐 필요 없다 — 3-B의 `npx ai-sdlc-runner init`이 다 물어본다: 앱이 없다고 답하면 매니페스트와 생성 페이지 링크를 보여 주고, 봇 토큰·앱 토큰·채널·승인 역할까지 그 자리에서 검증하며 받는다(순서와 각 단계는 [3-B의 표](#3-b-자동으로-돌리기-러너) 참고). 채널 초대(`/invite @AI-SDLC`)와 사용자 그룹 만들기만 Slack 쪽에서 미리 해 두면 된다.
 
-### ⑥ 설정·환경변수
-
-`sdlc.config.json`에 추가한다:
-
-```json
-{
-  "linearTrigger": "poll",
-  "linearPollIntervalMs": 30000,
-  "slack": {
-    "channelId": "C0123456789",
-    "startMode": "button",
-    "roleGroups": {
-      "Product Owner": "S0PRODUCT",
-      "Engineer": "S0ENG",
-      "Code Owner": "S0CODEOWN",
-      "Release Manager": "S0RELEASE",
-      "Service Owner": "S0SRE"
-    }
-  }
-}
-```
-
-| 변수 | 값 |
-| --- | --- |
-| `SLACK_BOT_TOKEN` | ②에서 복사한 `xoxb-…` |
-| `SLACK_APP_TOKEN` | ③에서 복사한 `xapp-…`(`connections:write`) |
-
-두 값이 모두 있어야 Slack 기능이 켜진다. 하나라도 없으면 기존 webhook 방식 그대로 동작한다. Slack이 켜지면 `linearTrigger` 기본값은 `"poll"`(30초 간격)이라 `LINEAR_WEBHOOK_SECRET`이 필요 없다. `"webhook"`으로 바꾸면 기존 webhook 경로를 그대로 쓴다.
-
-### ⑦ 실행
+### ② 실행
 
 ```bash
-npm start
+npx ai-sdlc-runner start
 ```
 
-기동 로그에 Slack 연결 상태, 채널, 역할 매핑, 폴링 주기가 한 번에 찍힌다. 봇이 채널에 없으면(`not_in_channel`) 이 시점에 바로 알려준다.
+기동 로그에 Slack 연결 상태, 채널, 역할 매핑, 폴링 주기가 한 번에 찍힌다. 봇이 채널에 없으면(`not_in_channel`) `init`의 6단계에서 이미 걸러지지만, 나중에 채널에서 빠졌다면 이 시점에 다시 알려준다.
 
-### ⑧ 사용법
+### ③ 사용법
 
 | 상황 | 화면 |
 | --- | --- |
@@ -294,7 +289,7 @@ npm start
 | 단계 진행 | 티켓 스레드에 `⏳ 01 Plan 실행 중` → `✅ 01 Plan 완료 (4분)` |
 | 게이트 열림 | 스레드에 승인 역할 멘션 + 요약 + `[✅ 승인]` `[⛔ 반려]`, 채널에도 한 번 더 보임 |
 
-### ⑨ 01 Plan 인터뷰
+### ④ 01 Plan 인터뷰
 
 01 Plan 초안에 `## 미해결 질문`이 남아 있으면(최대 `interviewMaxRounds`회, 기본 5) 러너가 게이트를 열기 전에 스레드에서 되묻는다.
 
@@ -313,7 +308,7 @@ Slack이 꺼져 있거나 webhook 모드면 인터뷰 없이(`noInterview`) 바�
 
 **게이트와 다른 점(타임아웃):** 보통 게이트는 `gateTimeoutMs` 안에 결정이 안 나면 타임아웃 = 반려로 처리돼 파이프라인이 멈춘다. 인터뷰 타임아웃은 그와 반대로 **진행**이다 — 질문이 남아 있어도 막지 않고 PO가 게이트에서 판단하도록 넘긴다.
 
-### ⑩ 반려 후 재작업 (01·02·03)
+### ⑤ 반려 후 재작업 (01·02·03)
 
 `01-plan`·`02-design`·`03-build` 게이트에서 반려하면(Slack 모달 사유 또는 Linear Canceled + 코멘트), 파이프라인이 멈추지 않고 그 단계를 사유를 반영해 다시 돈다(게이트당 최대 `reworkMaxAttempts`회, 기본 3).
 
@@ -324,11 +319,54 @@ Slack이 꺼져 있거나 webhook 모드면 인터뷰 없이(`noInterview`) 바�
 
 **04 Test·05 Deploy·06 Maintain 반려는 재작업하지 않는다** — 지금처럼 그 자리에서 파이프라인을 멈춘다. 코드를 다시 짜야 하는 반려는 새 티켓으로 시작하는 게 맞기 때문이다.
 
-### ⑪ 누가 시작할 수 있는가
+### ⑥ 누가 시작할 수 있는가
 
 **봇이 들어간 채널의 멤버는 누구나 `/sdlc <제목>`, `/sdlc run <키>`, `[▶ 시작]`으로 파이프라인을 시작할 수 있다.** 러너가 저장소에서 `claude -p`를 권한 확인 없이(`bypassPermissions`) 돌리기 때문이다 — 그 채널 멤버는 누구나 저장소에서 임의 코드를 실행시킬 수 있다는 뜻이므로, 봇은 신뢰할 수 있는 사람만 있는 채널에만 초대한다.
 
 `linearTrigger`가 `"poll"`이면(Slack을 켰을 때 기본값) `POST /webhook/<source>` 엔드포인트 자체가 꺼져 있다(요청이 오면 404) — `LINEAR_WEBHOOK_SECRET`을 설정하지 않아도 그 경로로 위조 요청이 들어올 수 없다. `"webhook"`으로 바꾸면 이 엔드포인트가 다시 열리고 `LINEAR_WEBHOOK_SECRET`이 필수가 된다.
+
+---
+
+## 개발자용: 소스에서 실행
+
+러너를 고치거나, `npx ai-sdlc-runner`가 아직 npm에 없을 때는 저장소를 직접 받아 돌린다.
+
+```bash
+git clone https://github.com/PeterCha90/FastCampus.git ~/tools/FastCampus
+cd ~/tools/FastCampus/AI_SDLC/runner
+npm install
+```
+
+`sdlc.config.json`을 직접 연다(3-B의 `init`이 묻는 값과 같은 키 + `gatePollIntervalMs` 같은 세부 튜닝 값):
+
+| 설정 | 넣을 값 |
+| --- | --- |
+| `repoPath` | 내 저장소 경로. 절대 경로, 또는 `runner/` 기준 상대 경로 |
+| `linearTeamId` | 티켓을 받을 Linear 팀 ID (Claude Code에서 Linear MCP의 `list_teams`로 조회) |
+| `demoAppUrl` | 04 Test에서 e2e로 열어 볼 내 앱 주소 (예: `http://localhost:3000`) |
+| `gateRoles` | 단계별 승인자 이름. 기본값은 PO / PO / Engineer / Code Owner / Release Manager / Service Owner |
+| `slack.channelId`, `slack.startMode`, `slack.roleGroups` | Slack을 붙일 때만. 3-C ①의 채널·역할과 같은 값 |
+
+`repoPath`는 git 저장소여야 한다. 러너가 티켓마다 `sdlc/<키>` 브랜치의 worktree를 만들어 그 안에서 작업하므로, 내 작업 트리는 건드리지 않는다. 토큰은 config 파일이 아니라 환경변수로 export한다:
+
+```bash
+export LINEAR_API_KEY=lin_api_...          # Linear → Settings → Security & access (API) → Personal API keys
+export SLACK_BOT_TOKEN=xoxb-...            # Slack 앱 → Install App / OAuth & Permissions
+export SLACK_APP_TOKEN=xapp-...            # Basic Information → App-Level Tokens (connections:write)
+npm start
+```
+
+`npm start`는 지금처럼 `src/index.ts`를 바로 실행한다(빌드된 `dist/`를 거치지 않는다). 러너는 시작할 때만 환경변수를 읽는다. `SDLC_CONFIG_PATH`로 다른 설정 파일을 가리킬 수도 있다.
+
+Slack 없이 Linear webhook만으로 쓰려면(또는 `linearTrigger`를 `"webhook"`으로 바꿨다면) 러너 포트를 외부에 열어야 한다:
+
+```bash
+ngrok http 3939   # 또는: ssh -R 80:localhost:3939 serveo.net
+```
+
+Linear → Settings → API → Webhooks에서 `<터널 주소>/webhook/linear`를 추가하고 **Issue** 이벤트를 구독한다. 이때 나오는 signing secret을 `LINEAR_WEBHOOK_SECRET`에 넣고 `npm start`를 다시 실행한다. Slack을 켜서 `linearTrigger`가 `"poll"`(기본값)이면 터널도 `LINEAR_WEBHOOK_SECRET`도 필요 없다.
+
+패키지 빌드(`npm run build`)와 배포 전 점검(`npm run smoke:pack`)은 [`runner/README.md`](runner/README.md)에 있다.
 
 ---
 
@@ -363,7 +401,7 @@ Slack이 꺼져 있거나 webhook 모드면 인터뷰 없이(`noInterview`) 바�
 
 ## 설정
 
-`runner/sdlc.config.json` (자동 모드):
+토큰·채널·팀·시작 방식은 `npx ai-sdlc-runner init`이 묻고 저장한다(3-B). 아래 값들은 그보다 세부적인 파이프라인 튜닝값이라 `init`이 묻지 않는다 — 직접 파일을 연다. `npx ai-sdlc-runner config`로 지금 쓰는 파일 위치를 확인할 수 있다(npx로 설치했으면 `~/.ai-sdlc/repos/<저장소 경로 해시>/config.json`, 소스에서 `npm start`로 돌리면 `runner/sdlc.config.json`).
 
 | 설정 | 기본값 | 설명 |
 | --- | --- | --- |
@@ -383,13 +421,14 @@ Slack이 꺼져 있거나 webhook 모드면 인터뷰 없이(`noInterview`) 바�
 
 | 변수 | 설명 |
 | --- | --- |
-| `LINEAR_API_KEY` | 자동 모드 필수. 게이트 상태 조회와 코멘트에 쓴다 |
-| `LINEAR_WEBHOOK_SECRET` | `linearTrigger: "webhook"`일 때 필수. webhook 서명 검증. Slack이 켜져 기본값이 `"poll"`이면 필요 없다 |
-| `SLACK_BOT_TOKEN` | Slack 봇 필수(둘 중 하나라도 없으면 Slack 기능이 꺼진다). `xoxb-…` |
-| `SLACK_APP_TOKEN` | Slack 봇 필수. `connections:write` 스코프의 `xapp-…`, Socket Mode용 |
+| `LINEAR_API_KEY` | 자동 모드 필수. 게이트 상태 조회와 코멘트에 쓴다. `init`이 `credentials.json`에 저장하며, 여기 지정하면 그보다 우선한다 |
+| `LINEAR_WEBHOOK_SECRET` | `linearTrigger: "webhook"`일 때 필수. webhook 서명 검증. Slack이 켜져 기본값이 `"poll"`이면 필요 없다(개발자용 절 참고) |
+| `SLACK_BOT_TOKEN` | Slack 봇 필수(둘 중 하나라도 없으면 Slack 기능이 꺼진다). `xoxb-…`. `init`이 저장하며, 여기 지정하면 그보다 우선한다 |
+| `SLACK_APP_TOKEN` | Slack 봇 필수. `connections:write` 스코프의 `xapp-…`, Socket Mode용. `init`이 저장하며, 여기 지정하면 그보다 우선한다 |
 | `SDLC_AUTO_APPROVE` | `1`이면 게이트 전부 건너뜀 |
 | `SDLC_BUGFIX` | `1`이면 테스트 파일 편집 차단 (`protect-tests`) |
 | `RELEASE_APPROVED` | `1`이어야 프로덕션 배포 명령 허용 (`production-gate`) |
+| `AI_SDLC_HOME` | 설정·자격 증명을 저장할 위치. 기본값 `~/.ai-sdlc` (`--home`과 같다) |
 
 ---
 
@@ -400,7 +439,10 @@ Slack이 꺼져 있거나 webhook 모드면 인터뷰 없이(`noInterview`) 바�
 | 스킬이 목록에 안 나온다 | `claude plugin list`에 `ai-native-sdlc@ai-sdlc`가 있는지 확인하고, 설치 뒤 Claude Code를 다시 시작한다. `project`/`local` 범위로 설치했다면 그 저장소 안에서만 보인다 |
 | `marketplace add`가 저장소를 못 찾는다 | 저장소가 비공개면 접근 권한이 있는 GitHub 계정으로 git 인증이 돼 있어야 한다 (`gh auth status`) |
 | 04 Test의 e2e가 매번 실패하고 06이 후속 티켓을 계속 만든다 | e2e는 `ego-browser`로 `demoAppUrl`을 연다. `printf 'cliLog("ok")\n' \| ego-browser nodejs 2>&1`이 `ok`를 출력하는지, 앱이 그 주소에 떠 있는지 확인한다. 자동 티켓은 깊이 3에서 멈춘다 |
-| `npm start`가 바로 종료된다 | 출력된 `[config]` 메시지대로 `LINEAR_API_KEY`, `LINEAR_WEBHOOK_SECRET`, `linearTeamId`를 채운다 |
+| 뭐가 문제인지 모르겠다 | `npx ai-sdlc-runner doctor`로 Node 버전, `claude` 설치·로그인, Linear MCP 연결, 토큰 3개, 봇의 채널 참여, 저장소 git 여부, 템플릿 파일, `ego-browser` 준비를 한 번에 확인한다 |
+| `npx ai-sdlc-runner start`가 "먼저 init"이라며 종료한다 | 그 저장소에서 `npx ai-sdlc-runner init`을 아직 안 한 것이다. 설정은 `--repo`(기본 현재 폴더)별로 따로 저장된다 |
+| `start`가 토큰 검증 실패로 종료한다 | 어떤 토큰인지 메시지에 나온다. 토큰이 만료·폐기됐으면 `npx ai-sdlc-runner init`을 다시 돌려 그 토큰만 바꾼다 |
+| `npm start`(소스 실행)가 바로 종료된다 | 출력된 `[config]` 메시지대로 `LINEAR_API_KEY`, `LINEAR_WEBHOOK_SECRET`, `linearTeamId`를 채운다(개발자용 절 참고) |
 | 티켓을 만들어도 파이프라인이 시작되지 않는다(webhook 모드) | 터널이 살아 있는지, webhook URL이 `/webhook/linear`로 끝나는지 확인한다. 서명이 틀리면 러너 로그에 401이 찍힌다 |
 | Slack 봇 초대 없이 채널에 알림이 안 온다(`not_in_channel`) | 알림을 보낼 채널에 `/invite @AI-SDLC`로 봇을 초대했는지 확인한다 |
 | Slack 버튼을 눌러도 반응이 없다 | 러너가 떠 있는지(`curl -s localhost:3939/health`) 확인하고, Socket Mode 연결이 끊기지 않았는지 로그를 본다. 끊긴 동안에도 Linear 카드를 직접 옮기면 승인은 그대로 된다 |
