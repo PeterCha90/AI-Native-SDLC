@@ -36,6 +36,8 @@ export interface CreateSlackInterviewChannelOptions {
   getRequesterEmail: (key: string) => string | undefined;
   /** How long `ask()` waits for a button press before resolving `{ kind: "timeout" }`. */
   timeoutMs: number;
+  /** Injected for tests; defaults to `console.warn`. */
+  log?: (message: string) => void;
 }
 
 export type SlackInterviewChannel = InterviewChannel & {
@@ -77,6 +79,7 @@ interface ActiveAsk {
 
 export function createSlackInterviewChannel(o: CreateSlackInterviewChannelOptions): SlackInterviewChannel {
   const { client, channel, stateDir, getRequesterEmail, timeoutMs } = o;
+  const log = o.log ?? console.warn;
 
   // At most one open interview per ticket key; `runPipeline`'s single-queue execution means in
   // practice at most one is ever open across the whole runner, but keying by `key` costs nothing
@@ -85,6 +88,13 @@ export function createSlackInterviewChannel(o: CreateSlackInterviewChannelOption
   // Reverse index so `onThreadMessage` (which only knows a Slack thread_ts, not a ticket key) can
   // find the open interview a reply belongs to.
   const threadIndex = new Map<string, string>();
+  // Guards against two near-simultaneous button presses for the same key both computing an
+  // outcome and both calling chat.update — mirrors `inFlightGates` in slack/app.ts. Held across
+  // the whole `onButton` body (acquired before the first `await`), released in `finally`.
+  const inFlightButtons = new Set<string>();
+  // The missing_scope warning below fires on every failed lookup (once per interview round) —
+  // logged only once per channel instance so a long-running runner doesn't spam the log.
+  let missingScopeWarned = false;
 
   function settle(key: string, outcome: InterviewOutcome): void {
     const a = active.get(key);
@@ -103,10 +113,9 @@ export function createSlackInterviewChannel(o: CreateSlackInterviewChannelOption
       return res.user?.id;
     } catch (err) {
       const code = (err as { data?: { error?: string } }).data?.error;
-      if (code === "missing_scope") {
-        console.warn(
-          `[slack:interview] users:read.email 스코프가 없어 요청자를 찾지 못했다 — 매니페스트를 다시 붙여넣고 앱을 재설치해야 한다.`,
-        );
+      if (code === "missing_scope" && !missingScopeWarned) {
+        missingScopeWarned = true;
+        log(`[slack:interview] users:read.email 스코프가 없어 요청자를 찾지 못했다 — 매니페스트를 다시 붙여넣고 앱을 재설치해야 한다.`);
       }
       return undefined;
     }
@@ -135,6 +144,10 @@ export function createSlackInterviewChannel(o: CreateSlackInterviewChannelOption
 
     return new Promise<InterviewOutcome>((resolve) => {
       const timer = setTimeout(() => settle(key, { kind: "timeout" }), timeoutMs);
+      // A pending interview must never keep the process alive on its own (same as
+      // linear-watcher's poll timer and claude.ts's kill timer) — the runner's own work (the HTTP
+      // server, the queue) is what keeps it running, not this timeout.
+      timer.unref?.();
       active.set(key, { resolve, timer, channel: postChannel, threadTs, ticketId, questions, round, maxRounds, requesterId });
       threadIndex.set(threadTs, key);
     });
@@ -156,15 +169,22 @@ export function createSlackInterviewChannel(o: CreateSlackInterviewChannelOption
     const a = active.get(key);
     if (!a) return;
 
-    const state = (await readInterviewState(stateDir, key)) ?? {
+    // Normally always present — `ask()` writes it before returning the pending promise. If it's
+    // somehow missing (state file deleted out-of-band), still record the answer under a fresh
+    // state so the pipeline sees it on `apply`/`proceed`, but skip the Slack message update below:
+    // there's no reliable `messageTs` to edit, and guessing (e.g. the thread's root ts) would edit
+    // the wrong message.
+    const existing = await readInterviewState(stateDir, key);
+    const state: InterviewState = existing ?? {
       round: a.round,
       questions: a.questions,
-      messageTs: a.threadTs,
+      messageTs: "",
       threadTs: a.threadTs,
       answers: [],
     };
     state.answers.push({ user: m.user ?? "", text: m.text, ts: m.ts });
     await writeInterviewState(stateDir, key, state);
+    if (!existing) return;
 
     const msg = interviewMessage({
       key,
@@ -180,39 +200,47 @@ export function createSlackInterviewChannel(o: CreateSlackInterviewChannelOption
   }
 
   async function onButton(key: string, action: "apply" | "proceed", userId: string): Promise<{ ok: boolean; message?: string }> {
-    const a = active.get(key);
-    if (!a) {
-      return { ok: false, message: `러너 재시작으로 이 실행은 중단됐다. /sdlc run ${key} 로 다시 시작한다.` };
+    if (inFlightButtons.has(key)) {
+      return { ok: false, message: "이미 처리 중이다" };
     }
+    inFlightButtons.add(key);
+    try {
+      const a = active.get(key);
+      if (!a) {
+        return { ok: false, message: `러너 재시작으로 이 실행은 중단됐다. /sdlc run ${key} 로 다시 시작한다.` };
+      }
 
-    const state = await readInterviewState(stateDir, key);
-    const answers = state?.answers ?? [];
+      const state = await readInterviewState(stateDir, key);
+      const answers = state?.answers ?? [];
 
-    let outcome: InterviewOutcome;
-    let renderState: "applied" | "proceeded";
-    if (action === "apply" && answers.length > 0) {
-      outcome = { kind: "answers", answers: answers.map((ans) => ({ user: ans.user, text: ans.text })) };
-      renderState = "applied";
-    } else {
-      outcome = { kind: "proceed" };
-      renderState = "proceeded";
+      let outcome: InterviewOutcome;
+      let renderState: "applied" | "proceeded";
+      if (action === "apply" && answers.length > 0) {
+        outcome = { kind: "answers", answers: answers.map((ans) => ({ user: ans.user, text: ans.text })) };
+        renderState = "applied";
+      } else {
+        outcome = { kind: "proceed" };
+        renderState = "proceeded";
+      }
+
+      const msg = interviewMessage({
+        key,
+        ticketId: a.ticketId,
+        questions: a.questions,
+        round: a.round,
+        maxRounds: a.maxRounds,
+        requesterId: a.requesterId,
+        answerCount: answers.length,
+        state: renderState,
+        by: userId,
+      });
+      await client.chat.update({ channel: a.channel, ts: state?.messageTs ?? a.threadTs, text: msg.text, blocks: msg.blocks });
+
+      settle(key, outcome);
+      return { ok: true };
+    } finally {
+      inFlightButtons.delete(key);
     }
-
-    const msg = interviewMessage({
-      key,
-      ticketId: a.ticketId,
-      questions: a.questions,
-      round: a.round,
-      maxRounds: a.maxRounds,
-      requesterId: a.requesterId,
-      answerCount: answers.length,
-      state: renderState,
-      by: userId,
-    });
-    await client.chat.update({ channel: a.channel, ts: state?.messageTs ?? a.threadTs, text: msg.text, blocks: msg.blocks });
-
-    settle(key, outcome);
-    return { ok: true };
   }
 
   return { ask, onThreadMessage, onButton };

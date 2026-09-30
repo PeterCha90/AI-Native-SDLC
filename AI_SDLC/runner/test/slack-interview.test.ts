@@ -337,6 +337,97 @@ test("ask: resolves {kind:'timeout'} after timeoutMs with no button press or rep
     timeoutMs: 20,
   });
 
-  const outcome = await channel.ask("ENG-10", ["질문"], 1, 5);
-  assert.equal(outcome.kind, "timeout");
+  // The interview channel's own timer is deliberately unref()'d (it must never keep a real runner
+  // process alive on its own — see the fix for point 3 of review round 1) — in production the HTTP
+  // server/queue keep the event loop alive regardless, but in this isolated test nothing else
+  // does. Hold a ref'd keep-alive handle for the duration so the unref'd timer still gets a chance
+  // to fire, same as it would inside the real runner process.
+  const keepAlive = setInterval(() => {}, 1000);
+  try {
+    const outcome = await channel.ask("ENG-10", ["질문"], 1, 5);
+    assert.equal(outcome.kind, "timeout");
+  } finally {
+    clearInterval(keepAlive);
+  }
+});
+
+// ── concurrency ──────────────────────────────────────────────────────────────
+
+test("onButton: two near-simultaneous presses (apply + proceed) on the same key are serialized — one settles, one is rejected as in-flight, and the final message matches the settled outcome", async () => {
+  const stateDir = await tmpStateDir();
+  await seedThread(stateDir, "ENG-11");
+  const client = fakeClient();
+  // Slow this down deliberately: the lock must span the whole async critical section (through
+  // chat.update), not just the synchronous prefix, otherwise a call already past the "is there a
+  // pending ask" check could still race a concurrent one here.
+  const realUpdate = client.chat.update;
+  client.chat.update = async (a: any) => {
+    await new Promise((r) => setTimeout(r, 20));
+    return realUpdate(a);
+  };
+  const channel = createSlackInterviewChannel({
+    client,
+    channel: "C1",
+    stateDir,
+    getRequesterEmail: () => undefined,
+    timeoutMs: 60_000,
+  });
+
+  const pending = channel.ask("ENG-11", ["질문"], 1, 5);
+  await new Promise((r) => setTimeout(r, 10));
+  await channel.onThreadMessage({ threadTs: "100.0", user: "U-bob", text: "답1", ts: "100.1" });
+
+  const [applyResult, proceedResult] = await Promise.all([
+    channel.onButton("ENG-11", "apply", "U-po1"),
+    channel.onButton("ENG-11", "proceed", "U-po2"),
+  ]);
+
+  const results = [applyResult, proceedResult];
+  assert.equal(results.filter((r) => r.ok).length, 1, "exactly one concurrent press should settle the ask");
+  const rejected = results.find((r) => !r.ok);
+  assert.ok(rejected && !rejected.ok);
+  if (rejected && !rejected.ok) assert.match(rejected.message!, /이미 처리 중/);
+
+  const outcome = await pending;
+  // Only "apply" (with the one collected answer) can win the race, since "apply" is issued first
+  // and holds the lock for the whole critical section — "proceed" can never observe the ask as
+  // still pending once "apply" has started.
+  assert.equal(outcome.kind, "answers");
+
+  const lastUpdate = client.updated[client.updated.length - 1];
+  assert.match(lastUpdate.text, /답변 1개 반영/, "the final Slack message must reflect the settled outcome, not a partial/raced one");
+});
+
+// ── missing_scope warning ────────────────────────────────────────────────────
+
+test("ask: a missing_scope lookup failure is logged once per channel instance, not once per round", async () => {
+  const stateDir = await tmpStateDir();
+  await seedThread(stateDir, "ENG-12");
+  const client = fakeClient(async () => {
+    const err = new Error("missing_scope") as Error & { data?: { error?: string } };
+    err.data = { error: "missing_scope" };
+    throw err;
+  });
+  const logs: string[] = [];
+  const channel = createSlackInterviewChannel({
+    client,
+    channel: "C1",
+    stateDir,
+    getRequesterEmail: () => "alice@example.com",
+    timeoutMs: 60_000,
+    log: (m) => logs.push(m),
+  });
+
+  const first = channel.ask("ENG-12", ["질문1"], 1, 5);
+  await new Promise((r) => setTimeout(r, 10));
+  await channel.onButton("ENG-12", "proceed", "U-x");
+  await first;
+
+  const second = channel.ask("ENG-12", ["질문2"], 2, 5);
+  await new Promise((r) => setTimeout(r, 10));
+  await channel.onButton("ENG-12", "proceed", "U-x");
+  await second;
+
+  assert.equal(client.lookupCalls.length, 2, "both rounds must attempt the lookup");
+  assert.equal(logs.length, 1, "the missing_scope warning must be logged only once per channel instance");
 });

@@ -369,6 +369,31 @@ test("notifier.stageReworking: updates the existing gate message to show '재작
   assert.match(lastUpdate.text, /재작업 1\/3/);
 });
 
+test("notifier.interviewAnswered: posts a note into the ticket thread naming the round and answer count", async () => {
+  const runnerDir = await tmpRunnerDir();
+  const stateDir = join(runnerDir, ".state");
+  const client = fakeClient();
+  const notifier = createSlackNotifier({ client, channel: "C1", stateDir, roleGroups: {} });
+
+  await notifier.runStarted({
+    key: "ENG-7",
+    title: "새 버그",
+    url: "http://x/ENG-7",
+    labels: [],
+    depth: 0,
+    autoApprove: false,
+    startedAt: new Date().toISOString(),
+    gateRoles: GATE_ROLES,
+  });
+  const postsBefore = client.posted.length;
+  await notifier.interviewAnswered("ENG-7", 2, 3);
+
+  assert.equal(client.posted.length, postsBefore + 1, "must post a new message, not update an existing one");
+  const posted = client.posted[client.posted.length - 1];
+  assert.match(posted.text, /3개/);
+  assert.match(posted.text, /round 2|2회|2\)/);
+});
+
 test("notifier.gateWaiting: posts with reply_broadcast true", async () => {
   const runnerDir = await tmpRunnerDir();
   const stateDir = join(runnerDir, ".state");
