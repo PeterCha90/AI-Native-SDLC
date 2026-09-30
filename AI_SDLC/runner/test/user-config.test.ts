@@ -53,6 +53,36 @@ test("readCredentials() warns once and fixes a too-open (644) file to 600", asyn
   assert.equal(mode, 0o600);
 });
 
+test("readCredentials() catches any group/other bit via a bitmask, not just modes numerically above 600 — 0o604", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "sdlc-uc-"));
+  const path = join(dir, "credentials.json");
+  await writeFile(path, JSON.stringify({ slackBotToken: "xoxb-1" }), "utf8");
+  await chmod(path, 0o604);
+
+  const warnings: string[] = [];
+  const result = await readCredentials(path, (m) => warnings.push(m));
+
+  assert.deepEqual(result, { slackBotToken: "xoxb-1" });
+  assert.equal(warnings.length, 1);
+  const mode = (await stat(path)).mode & 0o777;
+  assert.equal(mode, 0o600);
+});
+
+test("readCredentials() catches any group/other bit via a bitmask — 0o640", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "sdlc-uc-"));
+  const path = join(dir, "credentials.json");
+  await writeFile(path, JSON.stringify({ slackBotToken: "xoxb-1" }), "utf8");
+  await chmod(path, 0o640);
+
+  const warnings: string[] = [];
+  const result = await readCredentials(path, (m) => warnings.push(m));
+
+  assert.deepEqual(result, { slackBotToken: "xoxb-1" });
+  assert.equal(warnings.length, 1);
+  const mode = (await stat(path)).mode & 0o777;
+  assert.equal(mode, 0o600);
+});
+
 test("maskToken() shows the first 8 characters plus an ellipsis", () => {
   assert.equal(maskToken("xoxb-1234567890"), "xoxb-123…");
 });

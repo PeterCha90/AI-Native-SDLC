@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir, homedir } from "node:os";
 import { join, basename } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -24,6 +24,25 @@ test("bundledPluginDir() finds a plugin dir that actually exists", () => {
   const dir = bundledPluginDir();
   assert.equal(existsSync(dir), true);
   assert.equal(basename(dir), "plugin");
+});
+
+test("bundledPluginDir(root) prefers the dev checkout's ../plugin (has .claude-plugin/plugin.json), even when <root>/plugin also exists", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "sdlc-bundled-dev-"));
+  const root = join(parent, "runner");
+  // A frozen copy left behind by a prior prepack/smoke:pack run — must lose to the live dev plugin.
+  await mkdir(join(root, "plugin"), { recursive: true });
+  await mkdir(join(parent, "plugin", ".claude-plugin"), { recursive: true });
+  await writeFile(join(parent, "plugin", ".claude-plugin", "plugin.json"), "{}", "utf8");
+
+  assert.equal(bundledPluginDir(root), join(parent, "plugin"));
+});
+
+test("bundledPluginDir(root) falls back to <root>/plugin (installed package) when there is no dev checkout marker", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "sdlc-bundled-pkg-"));
+  const root = join(parent, "pkg-root");
+  await mkdir(join(root, "plugin"), { recursive: true });
+
+  assert.equal(bundledPluginDir(root), join(root, "plugin"));
 });
 
 test("manifestPath() points at <packageRoot>/slack/manifest.yaml", () => {

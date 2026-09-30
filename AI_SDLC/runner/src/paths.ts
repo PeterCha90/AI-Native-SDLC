@@ -16,16 +16,28 @@ export function packageRoot(): string {
   return resolve(dirname(fileURLToPath(import.meta.url)), "..");
 }
 
+/** True for the dev/monorepo `AI_SDLC/plugin` — the one directory that carries the plugin manifest. */
+function isDevPluginDir(dir: string): boolean {
+  return existsSync(join(dir, ".claude-plugin", "plugin.json"));
+}
+
 /**
- * The plugin directory bundled alongside the runner. Packaged (`npm pack`/`npm publish`) layouts
- * copy `plugin/` in next to `dist/` (see `AI_SDLC/README.md` §6), so `<packageRoot>/plugin` is
- * checked first; the dev/monorepo layout keeps `AI_SDLC/plugin` as a sibling of `AI_SDLC/runner`,
- * so `<packageRoot>/../plugin` is the fallback — this is also today's dev value.
+ * The plugin directory bundled alongside the runner. `root` defaults to `packageRoot()` and only
+ * exists as a parameter so tests can point both branches at temp dirs.
+ *
+ * The dev/monorepo checkout (`AI_SDLC/plugin`, a sibling of `AI_SDLC/runner`) is checked FIRST via
+ * its `.claude-plugin/plugin.json` marker, and wins whenever present — `prepack`/`smoke:pack`
+ * leave a copy at `<root>/plugin` behind after running once (see `AI_SDLC/README.md` §6), and that
+ * copy is frozen at whatever the plugin looked like when the script last ran. Preferring
+ * `<root>/plugin` first would make the dev runner silently pick up that stale copy instead of the
+ * live `AI_SDLC/plugin` a developer is actually editing. `<root>/plugin` is only the installed
+ * package's actual layout — no sibling `plugin/` exists next to a package installed from npm — so
+ * it's the correct (and only) answer there, and is used whenever the dev marker is absent.
  */
-export function bundledPluginDir(): string {
-  const bundled = join(packageRoot(), "plugin");
-  if (existsSync(bundled)) return bundled;
-  return resolve(packageRoot(), "..", "plugin");
+export function bundledPluginDir(root: string = packageRoot()): string {
+  const devPlugin = resolve(root, "..", "plugin");
+  if (isDevPluginDir(devPlugin)) return devPlugin;
+  return join(root, "plugin");
 }
 
 /** The Slack app manifest template shipped with the package. */

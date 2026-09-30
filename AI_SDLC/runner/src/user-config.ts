@@ -23,7 +23,7 @@ export async function readCredentials(path: string, log?: (message: string) => v
 
   const info = await stat(path);
   const mode = info.mode & 0o777;
-  if (mode > 0o600) {
+  if ((mode & 0o077) !== 0) {
     log?.(`[user-config] ${path} 권한이 600보다 넓다 (${mode.toString(8)}) — 600으로 고친다.`);
     await chmod(path, 0o600);
   }
