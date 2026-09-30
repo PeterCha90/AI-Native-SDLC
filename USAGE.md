@@ -59,7 +59,9 @@ claude --plugin-dir <AI_SDLC/plugin 경로>
 **(b) 저장소 단위, 자동으로**
 
 프로젝트 저장소에 `.claude/settings.json`을 두고 로컬 마켓플레이스를 등록하면, 그 디렉토리에서
-`claude`를 띄울 때마다 자동으로 붙는다. 실제로 동작하는 예시(`AI_SDLC/todo-app/.claude/settings.json`):
+`claude`를 띄울 때마다 자동으로 붙는다. `claude plugin install ai-native-sdlc@ai-sdlc --scope project`처럼
+`--scope project`를 붙여 설치하면 이 파일을 직접 쓸 필요 없이 CLI가 만들어준다. 손으로 쓴다면 이런
+내용이다:
 
 ```json
 {
@@ -78,9 +80,12 @@ claude --plugin-dir <AI_SDLC/plugin 경로>
 ```
 
 **주의 (실측 확인됨, 실패가 조용하다):** `source.source`는 반드시 `"directory"`여야 한다 — `"local"`은
-아예 동작하지 않는다. `path`는 프로젝트 디렉토리(위 예시라면 `AI_SDLC/todo-app/`) 기준 **상대 경로**여야
-한다. 절대 경로를 넣으면 에러 한 줄 없이 스킬이 하나도 로드되지 않는다. 로드됐는지 확인하는 방법은
-§6 참고.
+아예 동작하지 않는다. `path`는 프로젝트 디렉토리 기준 **상대 경로**여야 한다. 절대 경로를 넣으면
+에러 한 줄 없이 스킬이 하나도 로드되지 않는다. 로드됐는지 확인하는 방법은 §6 참고.
+
+이 저장소의 예시 앱(`AI_SDLC/todo-app/`)은 이 파일을 커밋해 두지 않는다 — 클론한 사람이 아래 "저장소
+준비"를 직접 따라 하며 `.claude/`가 생기는 과정을 보게 하려는 것이다("생성하는 재미"). `AI_SDLC/todo-app/`
+안에서 위 두 방법(추천 CLI 두 줄, 또는 `--scope project`) 중 하나로 설치하면 확인할 수 있다.
 
 ### 저장소 준비
 
@@ -89,14 +94,15 @@ claude --plugin-dir <AI_SDLC/plugin 경로>
 - **1페이지를 넘기지 말 것.** 길어지면 읽히지 않는다
 - **같은 실수를 두 번 하면 그 교정을 여기에 적을 것.** 이게 이 파일이 자라는 유일한 방법이다
 
-실제로 채워 넣은 예시가 `AI_SDLC/todo-app/.claude/CLAUDE.md`에 있다.
+실제로 채워 넣은 예시를 보려면 `AI_SDLC/todo-app`에서 플러그인을 설치하고(위 두 방법 중 하나) `/sdlc-init`을
+실행한다 — `.claude/CLAUDE.md`가 그 자리에 생긴다. 앞서 말했듯 이 파일은 저장소에 커밋돼 있지 않다.
 
-03 단계 이후부터는 CLAUDE.md 말고도 파이프라인이 기대하는 파일이 두 개 더 있다.
+03 단계 이후부터는 CLAUDE.md 말고도 파이프라인이 기대하는 파일이 두 개 더 있다(둘 다 `/sdlc-init`이 없으면 만든다).
 
 - `REVIEW.md` — 05 Deploy의 `sdlc-review`가 따르는 리뷰 정책 문서(Important/Nit 기준, nit 5건 상한,
-  리뷰가 지적하지 말아야 할 것). 예시: `AI_SDLC/todo-app/REVIEW.md`
+  리뷰가 지적하지 말아야 할 것). `AI_SDLC/todo-app/REVIEW.md`(없으면 `/sdlc-init`이 만든다)
 - `ops/bands.yaml` + `ops/detect.sh` — 06 Maintain이 이상 여부(tier)를 판정할 때 쓰는 지표 기준값과
-  결정론적 스크립트. 예시: `AI_SDLC/todo-app/ops/`
+  결정론적 스크립트. 예시: `AI_SDLC/todo-app/ops/`(이미 저장소에 커밋돼 있다)
 
 ---
 
@@ -236,11 +242,13 @@ npm run e2e        # bash e2e/check.sh. npm run dev가 떠 있어야 한다
 러너는 `package.json`에서 `npm test`를 감지해 04 TEST에서 쓴다. 자세한 사용법은
 `AI_SDLC/todo-app/README.md`에 있다.
 
-저장소 안에 파이프라인이 실제로 참조하는 파일도 함께 들어 있다.
+파이프라인이 실제로 참조하는 파일도 있다. `ops/`는 저장소에 커밋돼 있고, `.claude/CLAUDE.md`·`REVIEW.md`는
+플러그인 설치 후 `/sdlc-init`을 실행해야 생긴다(§1 "저장소 준비" 참고 — 이 예시 앱은 `.claude/`를
+커밋해 두지 않는다).
 
-- `.claude/CLAUDE.md` — 03 Build가 매 세션 읽는 컨텍스트(명령어/컨벤션/아키텍처/반복된 실수)
-- `REVIEW.md` — 05 Deploy의 `sdlc-review`가 따르는 리뷰 정책
-- `ops/bands.yaml` + `ops/detect.sh` — 06 Maintain이 티어를 판정할 때 쓰는 기준·스크립트
+- `.claude/CLAUDE.md` — 03 Build가 매 세션 읽는 컨텍스트(명령어/컨벤션/아키텍처/반복된 실수). 없으면 `/sdlc-init`이 만든다
+- `REVIEW.md` — 05 Deploy의 `sdlc-review`가 따르는 리뷰 정책(없으면 `/sdlc-init`이 만든다)
+- `ops/bands.yaml` + `ops/detect.sh` — 06 Maintain이 티어를 판정할 때 쓰는 기준·스크립트(이미 커밋돼 있다)
 
 ### 심어둔 버그
 

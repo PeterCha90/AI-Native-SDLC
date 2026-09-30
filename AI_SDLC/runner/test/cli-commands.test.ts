@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { installTemplatesReal } from "../src/cli/commands.ts";
+import { installTemplatesReal, runCli } from "../src/cli/commands.ts";
 
 async function tmpRepo(): Promise<string> {
   return await mkdtemp(join(tmpdir(), "ai-sdlc-commands-test-"));
@@ -47,4 +47,29 @@ test("installTemplatesReal skips .claude/CLAUDE.md when it already exists", asyn
 
   assert.equal(installed.includes(join(".claude", "CLAUDE.md")), false);
   assert.equal(await readFile(dest, "utf8"), "already here\n");
+});
+
+// `init` must refuse a non-git folder instead of silently falling back to cwd — the runner makes a
+// worktree per ticket (spec §5 step 1), and `start`/`doctor`/`config` already refuse the same folder
+// via `resolveRepoAndHome` returning null. Before this fix, `init --yes` would happily "succeed" in a
+// non-git folder and then `start` would immediately fail with "run init first", which is confusing.
+test("`init` refuses a non-git folder instead of falling back to cwd", async () => {
+  const nonGitDir = await tmpRepo();
+  const home = await tmpRepo();
+  const originalError = console.error;
+  const logged: string[] = [];
+  console.error = (msg?: unknown) => {
+    logged.push(String(msg));
+  };
+  try {
+    const code = await runCli(["init", "--yes", "--repo", nonGitDir, "--home", home]);
+    assert.equal(code, 1);
+    assert.ok(
+      logged.some((line) => line.includes("git 저장소")),
+      `expected a git-repo error message, got ${JSON.stringify(logged)}`,
+    );
+  } finally {
+    console.error = originalError;
+  }
+  assert.equal(existsSync(join(nonGitDir, ".claude")), false, "must not install templates outside a git repo");
 });

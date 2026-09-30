@@ -112,7 +112,11 @@ function resolveRepoAndHome(args: ParsedArgs): { repoRoot: string | null; home: 
 async function runInitCommand(args: ParsedArgs): Promise<number> {
   const home = args.home ?? defaultHome();
   const cwd = args.repo ? resolve(args.repo) : process.cwd();
-  const repoRoot = findRepoRoot(cwd) ?? cwd;
+  const repoRoot = findRepoRoot(cwd);
+  if (!repoRoot) {
+    console.error("git 저장소 안에서 실행한다 — 러너가 티켓마다 worktree를 만든다.");
+    return 1;
+  }
   const verifier = createVerifier();
 
   if (args.yes) {

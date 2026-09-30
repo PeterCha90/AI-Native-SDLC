@@ -5,6 +5,17 @@ AI-SDLC 파이프라인이 실제로 돌아가는 대상 앱이다. 러너(`../r
 - **개발 루프 (01~05)** — 일부러 심어둔 버그를 e2e가 잡고, 파이프라인이 intent → spec → plan → 코드 수정 + 회귀 테스트 → PR 까지 간다.
 - **운영 루프 (06)** — 운영 중 에러 로그를 모니터가 σ로 판정하고, 3σ면 클로드가 원인을 진단해 Linear 티켓을 연다. 그 티켓이 다시 01을 연다.
 
+## 처음 시작하기 — SDLC 플러그인 켜기
+
+이 예시 앱은 `.claude/`를 저장소에 커밋해 두지 않는다 — 클론한 사람이 직접 만들어 보게 한 것이다("생성하는
+재미"). 파이프라인이 이 폴더에서 실제로 걸리는 걸 보려면 먼저 아래를 한다.
+
+1. 플러그인을 설치한다: `claude plugin marketplace add PeterCha90/FastCampus && claude plugin install ai-native-sdlc@ai-sdlc`
+   (또는 이 폴더 안에서 `--scope project`를 붙이면 `.claude/settings.json`까지 CLI가 바로 써준다)
+2. `cd AI_SDLC/todo-app`에서 Claude Code를 열고 `/sdlc-init`을 실행한다 — 없으면 `.claude/CLAUDE.md`·
+   `REVIEW.md`·`ops/bands.yaml`·`ops/detect.sh`를 만든다(이미 있는 파일은 건드리지 않는다).
+3. 아래 "처음 받았다면 — 5분 확인"으로 앱 자체를 확인한다.
+
 ## 처음 받았다면 — 5분 확인
 
 ```bash
@@ -155,5 +166,5 @@ npm run monitor    # 터미널 2 — 모니터. 판정 로그를 여기서 본�
 | `test/server.test.mjs` | `npm test` — API 기본 동작(CRUD, 400, 404, 405, 접근 로그). 중복 케이스는 일부러 없다 |
 | `test/monitor.test.mjs` | `npm test` — 판정·중복 방지·회복·클로드 위임과 실패 시 대체·도구 제한 인자 |
 | `e2e/check.sh` | `npm run e2e` — 화면 렌더링 + 중복 추가 버그 재현 |
-| `.claude/CLAUDE.md`, `REVIEW.md` | 파이프라인이 이 저장소에서 작업할 때 읽는 규칙(`/sdlc-init`이 까는 위치)과 리뷰 기준 |
-| `.claude/settings.json` | 이 폴더에서 Claude Code를 열면 `ai-native-sdlc` 플러그인을 자동으로 켠다(`..` 마켓플레이스) |
+| `.claude/CLAUDE.md`, `REVIEW.md` | 파이프라인이 이 저장소에서 작업할 때 읽는 규칙과 리뷰 기준. 저장소에 커밋돼 있지 않다 — 없으면 `/sdlc-init`이 만든다(위 "처음 시작하기" 참고) |
+| `.claude/settings.json` | 이 폴더에서 Claude Code를 열면 `ai-native-sdlc` 플러그인을 자동으로 켠다(`..` 마켓플레이스). 저장소에 커밋돼 있지 않다 — 플러그인을 `--scope project`로 설치하면 생긴다 |

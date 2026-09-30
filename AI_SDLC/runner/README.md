@@ -41,6 +41,8 @@ you keep the webhook wired up, pushed to `POST /webhook/linear`).
 
 ## Use it
 
+Not on npm yet — see "Run from source" below.
+
 ```bash
 cd ~/code/my-app
 npx ai-sdlc-runner init      # interactive: tokens, Linear team, Slack channel, templates
@@ -59,8 +61,6 @@ Other commands:
 | `doctor` | Pre-flight checks as a table: Node version, `claude` installed/logged in, Linear MCP connected, the three tokens, target repo is git, template files present, `ego-browser` readiness. (Bot channel membership is only checked during `init`, not `doctor`.) |
 | `manifest [--open]` | Prints the Slack app manifest YAML; `--open` also opens the app-creation page. |
 | `config` | Prints the current settings (tokens masked to their first 8 characters). |
-
-Not on npm yet — see "Run from source" below.
 
 ## Build & package
 

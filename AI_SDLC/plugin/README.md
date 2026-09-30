@@ -23,8 +23,9 @@ claude plugin install ai-native-sdlc@ai-sdlc     # --scope project|local 로 범
 claude --plugin-dir /path/to/AI_SDLC/plugin
 ```
 
-**로컬 마켓플레이스로 상시 등록** — `.claude/settings.json`에 아래를 넣는다. 실제로 동작하는 예시는
-`AI_SDLC/todo-app/.claude/settings.json`:
+**로컬 마켓플레이스로 상시 등록** — `.claude/settings.json`에 아래를 넣는다(`--scope project`로 설치하면
+CLI가 이 파일을 직접 써준다). 이 저장소의 예시 앱(`AI_SDLC/todo-app/`)은 `.claude/`를 커밋해 두지 않는다 —
+아래 명령으로 설치하면 `AI_SDLC/todo-app/.claude/settings.json`이 같은 내용으로 생긴다:
 
 ```json
 {
@@ -322,7 +323,9 @@ Done으로 옮겨야 하는지가 그 카드 코멘트에 적힌다), 06이 후�
 끝낸다). 그리고 **세 번째부터는 문서화 대신 훅으로 격상하는 걸 고려한다** — 문서로 두 번 알려줬는데도
 반복되면 CLAUDE.md는 강제력이 없는 계층이므로, 결정론적으로 막는 훅으로 옮기는 편이 낫다는 판단이다.
 
-실제로 채워 넣은 예시는 `AI_SDLC/todo-app/.claude/CLAUDE.md`다. 그 `반복된 실수` 섹션에는 이 컨벤션이 실제로 적용된
+`AI_SDLC/todo-app`에서 플러그인을 설치하고 `/sdlc-init`을 실행하면 `AI_SDLC/todo-app/.claude/CLAUDE.md`에
+실제로 채워 넣은 예시가 생긴다(이 파일은 저장소에 커밋돼 있지 않다 — 직접 만들어 보라는 것이다). 그
+`반복된 실수` 섹션에는 이 컨벤션이 실제로 적용된
 사례들이 있다 — `ego-browser`의 `cliLog()`가 stdout이 아니라 stderr로 출력해 `2>&1` 없이는 스냅샷이
 조용히 사라지는 문제, 그리고 node 서버는 코드를 바꿔도 자동으로 다시 뜨지 않아 `npm run dev`를 재시작해야 하는
 문제(그 밖에 세션의 파일 쓰기 권한은 `Write(...)`가 아니라 `Edit(...)` 규칙으로 건다는 항목도 있다).
