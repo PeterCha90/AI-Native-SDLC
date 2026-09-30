@@ -13,6 +13,11 @@ const sourcePluginDir = path.join(runnerDir, "..", "plugin");
 const targetPluginDir = path.join(runnerDir, "plugin");
 const cliPath = path.join(runnerDir, "dist", "cli.js");
 
+// NOTE: this script runs as part of `npm pack --json` (via the `prepack`
+// lifecycle script), and npm captures that command's stdout as the JSON
+// result. Every message here MUST go to stderr — never console.log/stdout —
+// or it corrupts the JSON that `npm pack --json` callers (e.g. smoke-pack.mjs)
+// parse from stdout.
 async function main() {
   if (!existsSync(sourcePluginDir)) {
     console.error(`prepare-package: plugin source not found at ${sourcePluginDir}`);
@@ -21,14 +26,14 @@ async function main() {
 
   await rm(targetPluginDir, { recursive: true, force: true });
   await cp(sourcePluginDir, targetPluginDir, { recursive: true });
-  console.log(`prepare-package: copied ${sourcePluginDir} -> ${targetPluginDir}`);
+  console.error(`prepare-package: copied ${sourcePluginDir} -> ${targetPluginDir}`);
 
-  if (existsSync(cliPath)) {
-    await chmod(cliPath, 0o755);
-    console.log(`prepare-package: chmod 755 ${cliPath}`);
-  } else {
-    console.warn(`prepare-package: ${cliPath} not found yet, skipping chmod (build src/cli.ts first)`);
+  if (!existsSync(cliPath)) {
+    console.error(`prepare-package: ${cliPath} not found — run \`npm run build\` first (src/cli.ts must exist and compile)`);
+    process.exit(1);
   }
+  await chmod(cliPath, 0o755);
+  console.error(`prepare-package: chmod 755 ${cliPath}`);
 }
 
 main().catch((err) => {
