@@ -157,6 +157,84 @@ test("gateMessage approved shows who approved, or Linear when resolved there", (
   assert.match(byLinear.text, /승인/);
 });
 
+test("ticketNotice escapes mrkdwn special characters in title and creator", () => {
+  const msg = ticketNotice(
+    {
+      ...TICKET,
+      title: "Fix A<B & C>D",
+      creator: "<http://evil.example/|steal>",
+    },
+    { state: "new" },
+  );
+  assert.match(msg.text, /Fix A&lt;B &amp; C&gt;D/);
+  assert.match(msg.text, /&lt;http:\/\/evil\.example\/\|steal&gt;/);
+  // The forged link markup must not survive as raw Slack link syntax (our own
+  // legitimate ticket link also starts with "<http", so check for the payload itself).
+  assert.ok(!msg.text.includes("<http://evil"), "raw <http://evil from user input must not survive");
+  // Our own generated ticket link must remain intact and unescaped.
+  assert.match(msg.text, new RegExp(`<${TICKET.url.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\|${TICKET.key}>`));
+});
+
+test("gateMessage escapes mrkdwn special characters in role and summary, and truncation still holds after escaping", () => {
+  const withRole = gateMessage({
+    key: "ENG-12",
+    ticketId: "uuid-12",
+    stage: "01-plan",
+    role: "<http://evil.example/|Product Owner>",
+    summary: "s",
+    gateUrl: "u",
+    state: "waiting",
+  });
+  assert.match(withRole.text, /&lt;http:\/\/evil\.example\/\|Product Owner&gt;/);
+  assert.ok(!withRole.text.includes("<http://evil"));
+
+  // A summary made entirely of escapable characters expands when escaped (each "<"
+  // becomes "&lt;", 4x longer); the final section text must still be <= 3000.
+  const escapableSummary = "<".repeat(3000);
+  const msg = gateMessage({
+    key: "ENG-12",
+    ticketId: "uuid-12",
+    stage: "04-test",
+    role: "Engineer",
+    summary: escapableSummary,
+    gateUrl: "u",
+    state: "waiting",
+  });
+  const sections = findSectionBlocks(msg.blocks);
+  const summarySection = sections.find((s: any) => s.text.text.startsWith("&lt;"));
+  assert.ok(summarySection, "expected an escaped summary section");
+  assert.ok(summarySection.text.text.length <= 3000);
+  assert.ok(!summarySection.text.text.includes("<"), "raw '<' from summary must not survive escaping");
+});
+
+test("gateMessage rejected with no reason renders a placeholder instead of a trailing space", () => {
+  const msg = gateMessage({
+    key: "ENG-12",
+    ticketId: "uuid-12",
+    stage: "01-plan",
+    role: "Engineer",
+    summary: "s",
+    gateUrl: "u",
+    state: "rejected",
+  });
+  assert.equal(msg.text, "⛔ 반려: (사유 없음)");
+});
+
+test("gateMessage rejected reason is escaped", () => {
+  const msg = gateMessage({
+    key: "ENG-12",
+    ticketId: "uuid-12",
+    stage: "01-plan",
+    role: "Engineer",
+    summary: "s",
+    gateUrl: "u",
+    state: "rejected",
+    reason: "<script>&</script>",
+  });
+  assert.match(msg.text, /&lt;script&gt;&amp;&lt;\/script&gt;/);
+  assert.ok(!msg.text.includes("<script"));
+});
+
 test("gateMessage rejected includes the reason", () => {
   const msg = gateMessage({
     key: "ENG-12",

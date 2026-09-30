@@ -52,6 +52,18 @@ function truncate(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
+/**
+ * Escapes Slack mrkdwn's three special characters in user-controlled text (ticket
+ * titles, creator names, role names, summaries, rejection reasons, ...) so it can
+ * never be read as mrkdwn syntax — e.g. `<http://evil|text>` forging a link, or
+ * `<`/`>`/`&` garbling the message. `&` must go first or its own escape would be
+ * re-escaped. Never apply this to Slack syntax we generate ourselves
+ * (`<url|KEY>`, `<@U>`, `<!subteam^S>`) — that would break the real link/mention.
+ */
+function escapeMrkdwn(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 function section(text: string): unknown {
   return { type: "section", text: { type: "mrkdwn", text } };
 }
@@ -64,8 +76,8 @@ export function ticketNotice(
   t: { key: string; title: string; url: string; creator?: string; labels: string[]; ticketId: string },
   o: { state: "new" | "started" | "ignored" | "auto"; by?: string; parentKey?: string; depth?: number },
 ): Msg {
-  let text = `🆕 *<${t.url}|${t.key}>* ${t.title}`;
-  if (t.creator) text += ` — ${t.creator}`;
+  let text = `🆕 *<${t.url}|${t.key}>* ${escapeMrkdwn(t.title)}`;
+  if (t.creator) text += ` — ${escapeMrkdwn(t.creator)}`;
   if (t.labels.includes("sdlc-auto") && o.parentKey) {
     text += ` · ↺ ${o.parentKey}에서 생성`;
     if (o.depth && o.depth > 1) text += ` (${o.depth}회차)`;
@@ -120,7 +132,7 @@ export function stageLine(stage: string, status: "running" | "ok" | "failed", du
 
   let text = `${icon} ${label} ${word}`;
   if (status !== "running" && durationMs !== undefined) text += ` (${formatDuration(durationMs)})`;
-  if (note) text += ` — ${note}`;
+  if (note) text += ` — ${escapeMrkdwn(note)}`;
 
   return { text, blocks: [section(text)] };
 }
@@ -142,22 +154,28 @@ export function gateMessage(g: {
 
   switch (g.state) {
     case "waiting": {
-      const mention = g.roleGroupId ? `<!subteam^${g.roleGroupId}>` : g.role;
+      const mention = g.roleGroupId ? `<!subteam^${g.roleGroupId}>` : escapeMrkdwn(g.role);
       headerText = `🔔 ${mention} 승인 필요 — ${label}`;
       break;
     }
     case "approved":
       headerText = g.by === "Linear" ? "✅ Linear에서 승인" : g.by ? `✅ <@${g.by}> 승인` : "✅ 승인";
       break;
-    case "rejected":
-      headerText = `⛔ 반려: ${g.reason ?? ""}`;
+    case "rejected": {
+      const reason = g.reason && g.reason.length > 0 ? escapeMrkdwn(g.reason) : "(사유 없음)";
+      headerText = `⛔ 반려: ${reason}`;
       break;
+    }
     case "timeout":
       headerText = `⏰ 승인 대기 시간 초과 — ${label}`;
       break;
   }
 
-  const blocks: unknown[] = [section(headerText), section(truncate(g.summary, 2900)), context(`<${g.gateUrl}|Linear에서 보기>`)];
+  const blocks: unknown[] = [
+    section(headerText),
+    section(truncate(escapeMrkdwn(g.summary), 2900)),
+    context(`<${g.gateUrl}|Linear에서 보기>`),
+  ];
 
   if (g.state === "waiting") {
     const value: ActionValue = { key: g.key, ticketId: g.ticketId, stage: g.stage };
