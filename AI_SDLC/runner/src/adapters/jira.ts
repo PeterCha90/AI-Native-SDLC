@@ -71,8 +71,10 @@ export function createJiraAdapter(_opts: JiraAdapterOptions): TicketSource {
       // GET {baseUrl}/rest/api/3/issue/{issueId}/transitions to find a
       // transition whose target status.statusCategory.key matches _type
       // ("done" for "completed"; the project's Canceled/Won't Do resolution
-      // for "canceled"), then POST {baseUrl}/rest/api/3/issue/{issueId}/transitions
-      // with body { transition: { id } }. Throw if no matching transition exists.
+      // for "canceled"; "new" for "unstarted" — used to reopen a gate card
+      // for rework after a rejection), then POST
+      // {baseUrl}/rest/api/3/issue/{issueId}/transitions with body
+      // { transition: { id } }. Throw if no matching transition exists.
       throw new Error("not implemented: transition a Jira issue to the given status category here");
     },
 

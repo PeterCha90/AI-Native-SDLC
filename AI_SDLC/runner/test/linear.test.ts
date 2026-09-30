@@ -118,6 +118,31 @@ test("setStateType() rejects with a message naming the missing type when the tea
   await assert.rejects(adapter.setStateType("I1", "completed"), /completed/);
 });
 
+test("setStateType() moves the issue to the lowest-position state of type 'unstarted'", async (t) => {
+  const calls = mockFetch(t, [
+    {
+      data: {
+        issue: {
+          team: {
+            states: {
+              nodes: [
+                { id: "unstarted-high", position: 5 },
+                { id: "unstarted-low", position: 0 },
+              ],
+            },
+          },
+        },
+      },
+    },
+    { data: { issueUpdate: { success: true } } },
+  ]);
+
+  await adapter.setStateType("I1", "unstarted");
+
+  assert.equal(calls[0].body.variables.type, "unstarted");
+  assert.equal(calls[1].body.variables.input.stateId, "unstarted-low");
+});
+
 test("listRecentIssues() returns only parentless issues, sorted ascending by createdAt", async (t) => {
   mockFetch(t, [
     {
@@ -141,7 +166,7 @@ test("listRecentIssues() returns only parentless issues, sorted ascending by cre
               description: "d1",
               url: "https://linear.app/x/issue/ENG-1",
               createdAt: "2026-01-01T00:00:00Z",
-              creator: { name: "Alice" },
+              creator: { name: "Alice", email: "alice@example.com" },
               labels: { nodes: [{ name: "bug" }] },
             },
           ],
@@ -156,6 +181,7 @@ test("listRecentIssues() returns only parentless issues, sorted ascending by cre
   assert.equal(result[0].creator, "Alice");
   assert.equal(result[1].creator, "Bob");
   assert.deepEqual(result[0].labels, ["bug"]);
+  assert.equal(result[0].creatorEmail, "alice@example.com");
 });
 
 test("getTicket() looks up an issue by key or id and maps it onto a Ticket", async (t) => {
@@ -169,6 +195,7 @@ test("getTicket() looks up an issue by key or id and maps it onto a Ticket", asy
           description: "body text",
           url: "https://linear.app/x/issue/ENG-12",
           labels: { nodes: [{ name: "bug" }] },
+          creator: { email: "creator@example.com" },
         },
       },
     },
@@ -180,4 +207,35 @@ test("getTicket() looks up an issue by key or id and maps it onto a Ticket", asy
   assert.equal(ticket.key, "ENG-12");
   assert.equal(ticket.title, "Found it");
   assert.deepEqual(ticket.labels, ["bug"]);
+  assert.equal(ticket.creatorEmail, "creator@example.com");
+});
+
+test("parse() maps webhook creator.email onto creatorEmail when present", () => {
+  const event = JSON.stringify({
+    type: "Issue",
+    action: "create",
+    url: "https://linear.app/team/issue/ENG-1",
+    data: {
+      id: "abc-123",
+      identifier: "ENG-1",
+      title: "Something broke",
+      description: "It broke.",
+      labels: [],
+      creator: { email: "reporter@example.com" },
+    },
+  });
+  const ticket = adapter.parse(event);
+  assert.ok(ticket);
+  assert.equal(ticket?.creatorEmail, "reporter@example.com");
+});
+
+test("parse() leaves creatorEmail undefined when the webhook payload has no creator", () => {
+  const event = JSON.stringify({
+    type: "Issue",
+    action: "create",
+    data: { id: "abc-123", identifier: "ENG-1", title: "x", description: "", labels: [] },
+  });
+  const ticket = adapter.parse(event);
+  assert.ok(ticket);
+  assert.equal(ticket?.creatorEmail, undefined);
 });

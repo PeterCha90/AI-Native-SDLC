@@ -117,3 +117,17 @@ test("linearPollIntervalMs defaults to 30000 and is overridable", async () => {
   const config2 = loadConfig(baseEnv({ SDLC_CONFIG_PATH: configPath2 }));
   assert.equal(config2.linearPollIntervalMs, 5000);
 });
+
+test("interviewMaxRounds and reworkMaxAttempts default to 5 and 3", async () => {
+  const configPath = await writeFileConfig({ linearTeamId: "team-1" });
+  const config = loadConfig(baseEnv({ SDLC_CONFIG_PATH: configPath }));
+  assert.equal(config.interviewMaxRounds, 5);
+  assert.equal(config.reworkMaxAttempts, 3);
+});
+
+test("interviewMaxRounds and reworkMaxAttempts are overridable from the config file", async () => {
+  const configPath = await writeFileConfig({ linearTeamId: "team-1", interviewMaxRounds: 8, reworkMaxAttempts: 1 });
+  const config = loadConfig(baseEnv({ SDLC_CONFIG_PATH: configPath }));
+  assert.equal(config.interviewMaxRounds, 8);
+  assert.equal(config.reworkMaxAttempts, 1);
+});

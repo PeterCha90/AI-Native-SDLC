@@ -19,6 +19,7 @@ interface LinearWebhookPayload {
     url?: string;
     labels?: Array<{ id?: string; name?: string }>;
     labelIds?: string[];
+    creator?: { email?: string } | null;
   };
 }
 
@@ -127,6 +128,7 @@ export function createLinearAdapter(opts: LinearAdapterOptions): TicketSource {
         body: data.description ?? "",
         labels,
         url: data.url ?? payload.url ?? "",
+        creatorEmail: data.creator?.email,
       };
     },
 
@@ -268,7 +270,7 @@ export function createLinearAdapter(opts: LinearAdapterOptions): TicketSource {
             description: string | null;
             url: string;
             createdAt: string;
-            creator: { name: string } | null;
+            creator: { name: string; email?: string } | null;
             labels: { nodes: Array<{ name: string }> };
           }>;
         };
@@ -283,7 +285,7 @@ export function createLinearAdapter(opts: LinearAdapterOptions): TicketSource {
               description
               url
               createdAt
-              creator { name }
+              creator { name email }
               labels { nodes { name } }
             }
           }
@@ -300,6 +302,7 @@ export function createLinearAdapter(opts: LinearAdapterOptions): TicketSource {
           url: issue.url,
           createdAt: issue.createdAt,
           creator: issue.creator?.name ?? "unknown",
+          creatorEmail: issue.creator?.email,
         }))
         .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     },
@@ -313,6 +316,7 @@ export function createLinearAdapter(opts: LinearAdapterOptions): TicketSource {
           description: string | null;
           url: string;
           labels: { nodes: Array<{ name: string }> };
+          creator: { email?: string } | null;
         } | null;
       }>(
         apiKey,
@@ -324,6 +328,7 @@ export function createLinearAdapter(opts: LinearAdapterOptions): TicketSource {
             description
             url
             labels { nodes { name } }
+            creator { email }
           }
         }`,
         { id: idOrKey },
@@ -337,6 +342,7 @@ export function createLinearAdapter(opts: LinearAdapterOptions): TicketSource {
         body: issue.description ?? "",
         labels: issue.labels.nodes.map((l) => l.name),
         url: issue.url,
+        creatorEmail: issue.creator?.email,
       };
     },
   };

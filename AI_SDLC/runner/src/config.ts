@@ -47,6 +47,10 @@ export interface FileConfig {
   linearTrigger?: LinearTriggerKind;
   /** How often LinearWatcher polls for new tickets when linearTrigger is "poll". Default 30000. */
   linearPollIntervalMs?: number;
+  /** Max 01 Plan interview rounds before falling back to "proceed" with any remaining questions unresolved. Default 5. */
+  interviewMaxRounds?: number;
+  /** Max rework attempts per gate (01/02/03) after a rejection before the pipeline stops. Default 3. */
+  reworkMaxAttempts?: number;
   slack?: {
     channelId: string;
     startMode?: "button" | "auto";
@@ -76,6 +80,10 @@ export interface Config {
   jira: { baseUrl: string; email: string; apiToken: string; projectKey: string; webhookSecret: string };
   linearTrigger: LinearTriggerKind;
   linearPollIntervalMs: number;
+  /** Max 01 Plan interview rounds before falling back to "proceed" with any remaining questions unresolved. */
+  interviewMaxRounds: number;
+  /** Max rework attempts per gate (01/02/03) after a rejection before the pipeline stops. */
+  reworkMaxAttempts: number;
   /**
    * Non-null only when both SLACK_BOT_TOKEN and SLACK_APP_TOKEN are set AND
    * sdlc.config.json has slack.channelId — all three are required to turn Slack on.
@@ -162,6 +170,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     },
     linearTrigger,
     linearPollIntervalMs: file.linearPollIntervalMs ?? 30_000,
+    interviewMaxRounds: file.interviewMaxRounds ?? 5,
+    reworkMaxAttempts: file.reworkMaxAttempts ?? 3,
     slack,
   };
 

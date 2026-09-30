@@ -9,6 +9,8 @@ export interface Ticket {
   body: string;
   labels: string[];
   url: string;
+  /** The issue creator's email, when the ticket source can provide it. Used to find who to interview in Slack. */
+  creatorEmail?: string;
 }
 
 export interface NewTicket {
@@ -51,8 +53,11 @@ export interface TicketSource {
   getStateType(issueId: string): Promise<StateType>;
   /** Oldest first. Used to read the rejection reason a human left on a canceled gate. */
   listComments(issueId: string): Promise<IssueComment[]>;
-  /** Move an issue to the workflow's state of the given type. Used to move approval-gate cards from Slack. */
-  setStateType(issueId: string, type: "completed" | "canceled"): Promise<void>;
+  /**
+   * Move an issue to the workflow's state of the given type. Used to move approval-gate cards
+   * from Slack, and (with "unstarted") to reopen a gate card for rework after a rejection.
+   */
+  setStateType(issueId: string, type: "completed" | "canceled" | "unstarted"): Promise<void>;
   /** Parentless issues created since `sinceIso`, oldest first, capped at 50. Used to poll for new tickets. */
   listRecentIssues(sinceIso: string): Promise<RecentIssue[]>;
   /** Look up a single ticket by its human-readable key (e.g. "ENG-12") or internal id. */

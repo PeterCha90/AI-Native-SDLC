@@ -143,6 +143,8 @@ function makeConfig(repoPath: string): Config {
     jira: { baseUrl: "", email: "", apiToken: "", projectKey: "", webhookSecret: "" },
     linearTrigger: "webhook",
     linearPollIntervalMs: 30_000,
+    interviewMaxRounds: 5,
+    reworkMaxAttempts: 3,
     slack: null,
   };
 }
