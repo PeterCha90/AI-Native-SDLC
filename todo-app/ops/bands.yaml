@@ -1,0 +1,31 @@
+# ops/bands.yaml — 모니터(ops/monitor.mjs)가 판정에 쓰는 기준선.
+#
+# AI_SDLC 플러그인의 템플릿(AI_SDLC/plugin/templates/ops/bands.yaml)과 같은 형식이다.
+# 판정은 ops/detect.sh 가 deviation = |value - baseline| / sigma 로 계산하고, 모델은 관여하지 않는다.
+#
+# tier별 action은 고정이다:
+#   1sigma: log      — 기록만 한다.
+#   2sigma: diagnose — 진단 대상으로 표시한다. 티켓은 만들지 않는다.
+#   3sigma: act      — Linear에 티켓을 만든다(sdlc-auto 라벨). 그 티켓이 01 Plan을 다시 연다.
+#
+# 창(window)과 최소 표본 수는 monitor.mjs 의 MONITOR_WINDOW_SEC, MONITOR_MIN_REQUESTS 로 정한다.
+# 요청이 2~3건뿐인데 하나가 실패해 33%로 튀는 걸 막으려고 최소 표본 수를 둔다.
+
+metrics:
+  api_5xx_rate:
+    description: "최근 창 안의 /api/todos 응답 중 5xx 비율. 처리 안 된 예외가 없으면 0이어야 한다"
+    baseline: 0.0
+    sigma: 0.02      # 2%=1σ(기록), 4%=2σ(진단), 6% 이상=3σ(티켓)
+    tiers:
+      1sigma: log
+      2sigma: diagnose
+      3sigma: act
+
+  api_4xx_rate:
+    description: "최근 창 안의 /api/todos 응답 중 4xx 비율. 가끔의 404·400은 정상이라 폭을 넓게 잡았다"
+    baseline: 0.0
+    sigma: 0.0625    # 6.25%=1σ, 12.5%=2σ, 18.75% 이상=3σ
+    tiers:
+      1sigma: log
+      2sigma: diagnose
+      3sigma: act
