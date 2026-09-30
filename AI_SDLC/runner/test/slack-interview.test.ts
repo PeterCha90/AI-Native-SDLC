@@ -67,6 +67,33 @@ async function seedThread(stateDir: string, key: string, rec: Partial<ThreadReco
   });
 }
 
+// `ask()`'s returned promise doesn't resolve until a button press or the timeout, so tests that
+// need to inspect its *intermediate* effects (the post, the freshly-written .interview.json) can't
+// just `await` it. A fixed wall-clock sleep (the previous approach) races the real async chain
+// inside ask() — readThread -> lookupByEmail -> chat.postMessage -> writeJsonAtomic — which does
+// real disk I/O and can take longer than a few ms when the whole suite runs many test files'
+// worth of fs work concurrently (`npm test`), even though it's instant in isolation. That produced
+// intermittent failures (e.g. onThreadMessage racing ahead of ask()'s own state-file write and
+// hitting its "existing === null" fallback, which types answers but withholds messageTs and so
+// stays "안읽음" for the update). Poll for the real completion signal — the state file actually
+// containing the round `ask()` just posted — instead of guessing a sleep duration.
+async function waitForInterviewRound(stateDir: string, key: string, round: number): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  for (;;) {
+    try {
+      const raw = await readFile(join(stateDir, `${key}.interview.json`), "utf8");
+      const state = JSON.parse(raw);
+      if (state.round === round) return;
+    } catch {
+      // Not written yet (ENOENT) or mid-write (partial JSON) — keep polling.
+    }
+    if (Date.now() > deadline) {
+      throw new Error(`waitForInterviewRound: ${key} round ${round} never appeared within 5s`);
+    }
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
 // ── ask() ────────────────────────────────────────────────────────────────────
 
 test("ask: posts once to the ticket thread, mentions the requester, and writes .state/<key>.interview.json", async () => {
@@ -83,8 +110,7 @@ test("ask: posts once to the ticket thread, mentions the requester, and writes .
 
   const pending = channel.ask("ENG-1", ["질문 하나", "질문 둘"], 1, 5);
 
-  // Give ask() its microtask turn to post before we inspect state.
-  await new Promise((r) => setTimeout(r, 10));
+  await waitForInterviewRound(stateDir, "ENG-1", 1);
 
   assert.equal(client.posted.length, 1, "ask must post exactly once");
   const posted = client.posted[0];
@@ -118,7 +144,7 @@ test("ask: lookupByEmail failure -> message has no mention", async () => {
   });
 
   const pending = channel.ask("ENG-2", ["질문"], 1, 5);
-  await new Promise((r) => setTimeout(r, 10));
+  await waitForInterviewRound(stateDir, "ENG-2", 1);
 
   const posted = client.posted[0];
   assert.doesNotMatch(posted.text, /<@/, "must not contain a Slack mention when lookup fails");
@@ -140,7 +166,7 @@ test("ask: no requester email at all -> message has no mention", async () => {
   });
 
   const pending = channel.ask("ENG-9", ["질문"], 1, 5);
-  await new Promise((r) => setTimeout(r, 10));
+  await waitForInterviewRound(stateDir, "ENG-9", 1);
 
   assert.doesNotMatch(client.posted[0].text, /<@/);
   assert.equal(client.lookupCalls.length, 0, "no email means lookupByEmail is never called");
@@ -164,7 +190,7 @@ test("onThreadMessage: messages outside the open interview thread are ignored", 
   });
 
   const pending = channel.ask("ENG-3", ["질문"], 1, 5);
-  await new Promise((r) => setTimeout(r, 10));
+  await waitForInterviewRound(stateDir, "ENG-3", 1);
 
   await channel.onThreadMessage({ threadTs: "999.0", user: "U-bob", text: "엉뚱한 스레드", ts: "999.1" });
   const raw = await readFile(join(stateDir, "ENG-3.interview.json"), "utf8");
@@ -187,7 +213,7 @@ test("onThreadMessage: bot messages and subtyped messages (edits/deletes) in the
   });
 
   const pending = channel.ask("ENG-4", ["질문"], 1, 5);
-  await new Promise((r) => setTimeout(r, 10));
+  await waitForInterviewRound(stateDir, "ENG-4", 1);
 
   await channel.onThreadMessage({ threadTs: "100.0", user: "U-bot", botId: "B1", text: "봇 메시지", ts: "100.1" });
   await channel.onThreadMessage({ threadTs: "100.0", user: "U-bob", subtype: "message_changed", text: "수정됨", ts: "100.2" });
@@ -212,7 +238,7 @@ test("onThreadMessage: two real replies accumulate, and the message update shows
   });
 
   const pending = channel.ask("ENG-5", ["질문"], 1, 5);
-  await new Promise((r) => setTimeout(r, 10));
+  await waitForInterviewRound(stateDir, "ENG-5", 1);
 
   await channel.onThreadMessage({ threadTs: "100.0", user: "U-bob", text: "답1", ts: "100.1" });
   await channel.onThreadMessage({ threadTs: "100.0", user: "U-carol", text: "답2", ts: "100.2" });
@@ -242,7 +268,7 @@ test("onThreadMessage: after the state-file-missing fallback, a second reply nev
   });
 
   const pending = channel.ask("ENG-9", ["질문"], 1, 5);
-  await new Promise((r) => setTimeout(r, 10));
+  await waitForInterviewRound(stateDir, "ENG-9", 1);
 
   // Simulate the state file going missing out-of-band (e.g. deleted) — ask() has already
   // returned its pending promise, so the in-memory ActiveAsk is still tracking this thread.
@@ -282,7 +308,7 @@ test("onButton apply with 2 collected answers -> ask() resolves {kind:'answers',
   });
 
   const pending = channel.ask("ENG-6", ["질문"], 1, 5);
-  await new Promise((r) => setTimeout(r, 10));
+  await waitForInterviewRound(stateDir, "ENG-6", 1);
   await channel.onThreadMessage({ threadTs: "100.0", user: "U-bob", text: "답1", ts: "100.1" });
   await channel.onThreadMessage({ threadTs: "100.0", user: "U-carol", text: "답2", ts: "100.2" });
 
@@ -313,7 +339,7 @@ test("onButton apply with 0 collected answers -> behaves like proceed", async ()
   });
 
   const pending = channel.ask("ENG-7", ["질문"], 1, 5);
-  await new Promise((r) => setTimeout(r, 10));
+  await waitForInterviewRound(stateDir, "ENG-7", 1);
 
   const result = await channel.onButton("ENG-7", "apply", "U-po");
   assert.equal(result.ok, true);
@@ -335,7 +361,7 @@ test("onButton proceed -> ask() resolves {kind:'proceed'} immediately, regardles
   });
 
   const pending = channel.ask("ENG-8", ["질문"], 1, 5);
-  await new Promise((r) => setTimeout(r, 10));
+  await waitForInterviewRound(stateDir, "ENG-8", 1);
   await channel.onThreadMessage({ threadTs: "100.0", user: "U-bob", text: "답1", ts: "100.1" });
 
   const result = await channel.onButton("ENG-8", "proceed", "U-po");
@@ -412,7 +438,7 @@ test("onButton: two near-simultaneous presses (apply + proceed) on the same key 
   });
 
   const pending = channel.ask("ENG-11", ["질문"], 1, 5);
-  await new Promise((r) => setTimeout(r, 10));
+  await waitForInterviewRound(stateDir, "ENG-11", 1);
   await channel.onThreadMessage({ threadTs: "100.0", user: "U-bob", text: "답1", ts: "100.1" });
 
   const [applyResult, proceedResult] = await Promise.all([
@@ -457,12 +483,12 @@ test("ask: a missing_scope lookup failure is logged once per channel instance, n
   });
 
   const first = channel.ask("ENG-12", ["질문1"], 1, 5);
-  await new Promise((r) => setTimeout(r, 10));
+  await waitForInterviewRound(stateDir, "ENG-12", 1);
   await channel.onButton("ENG-12", "proceed", "U-x");
   await first;
 
   const second = channel.ask("ENG-12", ["질문2"], 2, 5);
-  await new Promise((r) => setTimeout(r, 10));
+  await waitForInterviewRound(stateDir, "ENG-12", 2);
   await channel.onButton("ENG-12", "proceed", "U-x");
   await second;
 
