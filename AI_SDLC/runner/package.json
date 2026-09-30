@@ -1,16 +1,34 @@
 {
   "name": "ai-sdlc-runner",
-  "version": "0.1.0",
-  "private": true,
-  "description": "Local runner that turns a Linear ticket into a 6-stage AI-SDLC pipeline of headless `claude -p` sessions.",
+  "version": "0.4.0",
+  "description": "Local runner that turns a Linear ticket into a 6-stage AI-SDLC pipeline of headless `claude -p` sessions, with a Slack bot front end. Install with `npx ai-sdlc-runner init` — no clone, no manual env exports.",
   "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "github:PeterCha90/FastCampus",
+    "directory": "AI_SDLC/runner"
+  },
+  "bin": {
+    "ai-sdlc-runner": "dist/cli.js",
+    "ai-sdlc": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "plugin",
+    "slack/manifest.yaml",
+    "README.md"
+  ],
   "engines": {
     "node": ">=22"
   },
   "scripts": {
     "start": "node --experimental-strip-types src/index.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test test/*.test.ts"
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "npm run build && node scripts/prepare-package.mjs",
+    "smoke:pack": "node scripts/smoke-pack.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
