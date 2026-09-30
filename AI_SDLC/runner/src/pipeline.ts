@@ -9,7 +9,7 @@ import { runStage, type StageResult } from "./claude.ts";
 import { runE2E } from "./e2e.ts";
 import { awaitApproval, gateMapPath, readGateMap, type GateMap, type StageId } from "./gate.ts";
 import type { LiveStatus, RunMeta, StageLogEntry } from "./state.ts";
-import { noopEvents, type PipelineEvents } from "./events.ts";
+import { noopEvents, safeEvents, type PipelineEvents } from "./events.ts";
 
 const DEPTH_MARKER = /sdlc-depth:\s*(\d+)/i;
 
@@ -258,6 +258,9 @@ export async function runPipeline(
 ): Promise<void> {
   const key = ticket.key || ticket.id;
   const repoRoot = config.repoPath;
+  // Wrapped unconditionally here — the pipeline must never depend on a caller having
+  // pre-wrapped `events` itself. A dead notifier can never stop a run.
+  const ev = safeEvents(events);
 
   // Written once, up front, so a listener can show a card for this run the moment it starts —
   // it never has to wait for 00-setup to finish.
@@ -273,7 +276,7 @@ export async function runPipeline(
     gateRoles: config.gateRoles,
   };
   await writeMeta(runnerDir, key, meta);
-  await events.runStarted(meta);
+  await ev.runStarted(meta);
 
   // The worktree is created up front, before stage 01, so that every stage — the documents as
   // well as the code — runs in ONE checkout.
@@ -293,7 +296,7 @@ export async function runPipeline(
   await mkdir(join(workDir, "docs", "spec"), { recursive: true });
   await mkdir(join(workDir, "docs", "plan"), { recursive: true });
 
-  const gates = config.autoApprove ? null : await setupGates(runnerDir, key, ticket, config, workDir, events);
+  const gates = config.autoApprove ? null : await setupGates(runnerDir, key, ticket, config, workDir, ev);
 
   /** Blocks on the human who owns this stage. Returns false if they rejected or the wait timed out. */
   async function gate(stage: StageId, summary: string): Promise<boolean> {
@@ -308,7 +311,7 @@ export async function runPipeline(
       gateUrl: gates[stage].url,
       since: new Date().toISOString(),
     });
-    await events.gateWaiting(key, stage, config.gateRoles[stage], gates[stage], summary);
+    await ev.gateWaiting(key, stage, config.gateRoles[stage], gates[stage], summary);
     const result = await awaitApproval({
       source,
       gate: gates[stage],
@@ -327,7 +330,7 @@ export async function runPipeline(
       sessionJsonlPath: null,
       note: result.approved ? `${config.gateRoles[stage]} 승인` : `중단: ${result.reason}`,
     });
-    await events.gateResolved(key, stage, result.approved, result.reason);
+    await ev.gateResolved(key, stage, result.approved, result.reason);
     return result.approved;
   }
 
@@ -339,12 +342,12 @@ export async function runPipeline(
     `sdlc-intent 스킬을 사용해 아래 티켓에서 ${docsIntent} 를 작성하라.\n\n` +
       `티켓: ${ticket.title}\n\n${ticket.body}\n\n출처: ${ticket.url}`,
     workDir,
-    events,
+    ev,
     ["Read", "Write", "Glob", "Grep", "Skill"],
   );
   if (!(await gate("01-plan", `${artifactWarning(intentResult, docsIntent)}01 Plan 산출물: \`${docsIntent}\`\n\n문제/원하는 결과/영향 범위/제약/미해결 질문이 티켓 의도와 맞는지 확인해 달라.`))) {
     await writeLive(runnerDir, key, { stage: "01-plan", phase: "aborted", since: new Date().toISOString() });
-    await events.runFinished(key, "aborted");
+    await ev.runFinished(key, "aborted");
     return;
   }
 
@@ -355,12 +358,12 @@ export async function runPipeline(
     "02-spec",
     `sdlc-spec 스킬을 사용해 ${docsIntent} 를 읽고 ${docsSpec} 를 작성하라. 정책 충돌은 해당 설계 항목 바로 아래 인라인으로 표시하라.`,
     workDir,
-    events,
+    ev,
     ["Read", "Write", "Glob", "Grep", "Skill"],
   );
   if (!(await gate("02-design", `${artifactWarning(specResult, docsSpec)}02 Design 산출물: \`${docsSpec}\`\n\n"정책 충돌" 섹션을 각 정책 담당자와 정리한 뒤 진행 여부를 결정해 달라.`))) {
     await writeLive(runnerDir, key, { stage: "02-design", phase: "aborted", since: new Date().toISOString() });
-    await events.runFinished(key, "aborted");
+    await ev.runFinished(key, "aborted");
     return;
   }
 
@@ -371,12 +374,12 @@ export async function runPipeline(
     "03-plan",
     `sdlc-plan 스킬을 사용해 ${docsSpec} 를 읽고 ${docsPlan} 를 작성하라. "무엇이 깨질 수 있는가" 심문을 반드시 포함하라. 코드는 아직 수정하지 마라.`,
     workDir,
-    events,
+    ev,
     ["Read", "Write", "Glob", "Grep", "Skill"],
   );
   if (!(await gate("03-build", `${artifactWarning(planResult, docsPlan)}03 Build 착수 계획: \`${docsPlan}\`\n\n변경할 파일 목록과 "무엇이 깨질 수 있는가"를 심문하고, 이대로 구현해도 되는지 판단해 달라.\n승인 후에만 에이전트가 코드를 편집한다.`))) {
     await writeLive(runnerDir, key, { stage: "03-build", phase: "aborted", since: new Date().toISOString() });
-    await events.runFinished(key, "aborted");
+    await ev.runFinished(key, "aborted");
     return;
   }
 
@@ -387,7 +390,7 @@ export async function runPipeline(
     `승인된 ${docsPlan} 의 작업 목록을 순서대로 구현하라. 계획에 없는 파일은 건드리지 마라 — ` +
       `plan-drift 훅이 커밋 시점에 계획과 실제 변경을 대조한다. 저장소 CLAUDE.md 의 규칙을 따르라.`,
     workDir,
-    events,
+    ev,
   );
 
   // ── 04 Test ─────────────────────────────────────────────────────────────────
@@ -398,7 +401,7 @@ export async function runPipeline(
     `sdlc-test 스킬을 사용해 ${docsPlan} 의 "성공 기준"을 실제로 실행하고, 통과할 때까지 피드백 루프를 돌려라. ` +
       `이건 버그 수정 작업일 수 있으니 테스트를 고쳐서 통과시키지 마라. 마지막에 verifier 서브에이전트로 독립 검증을 받아라.`,
     workDir,
-    events,
+    ev,
   );
 
   const testCmd = await detectTestCommand(workDir);
@@ -438,7 +441,7 @@ export async function runPipeline(
       `sdlc-review 스킬을 사용해 이 브랜치의 diff 를 Bugs/Security/Compliance 세 패스로 리뷰하라. ` +
         `저장소 REVIEW.md 의 정책을 따르고, ${docsSpec} 의 요구사항 대비 준수 여부를 확인하라. 승인하지 마라 — 발견만 보고하라.`,
       workDir,
-      events,
+      ev,
       ["Read", "Glob", "Grep", "Bash(git diff *)", "Bash(git log *)", "Bash(git status)", "Skill"],
     );
     // The release manager needs to know whether a review actually happened. An unreported failed
@@ -495,7 +498,7 @@ export async function runPipeline(
         (unitResult.output + "\n" + e2eResult.output).slice(0, 1500),
       ].join("\n"),
     },
-    events,
+    ev,
   );
 
   await gate("06-maintain", `06 Maintain 판정이 끝났다. 감지 결과와 후속 티켓 생성 여부를 확인하고 트리아지해 달라 (지금 고칠지, 일정에 넣을지, 기각할지).`);
@@ -503,7 +506,7 @@ export async function runPipeline(
   // The pipeline always finishes normally from here — unlike the 01/02/03 gates, nothing after
   // this point returns early, so "done" is unconditional regardless of how 06's gate resolved.
   await writeLive(runnerDir, key, { stage: "06-maintain", phase: "done", since: new Date().toISOString() });
-  await events.runFinished(key, "done");
+  await ev.runFinished(key, "done");
 }
 
 interface MaintainInput {

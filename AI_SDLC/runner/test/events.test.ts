@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, mkdir, writeFile, chmod } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, chmod } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -268,4 +268,64 @@ test("pipeline event order: starts with runStarted, ends with runFinished, each 
     const stage = calls[i].slice("stageStarted:".length);
     assert.equal(calls[i + 1], `stageFinished:${stage}`, `expected stageFinished:${stage} right after ${calls[i]}, got ${calls[i + 1]}`);
   }
+});
+
+/** Every method throws synchronously (well, rejects) — used to prove runPipeline wraps
+ * whatever `events` it's given, rather than trusting the caller to have pre-wrapped it. */
+function throwingEvents(): PipelineEvents {
+  const boom = async (): Promise<void> => {
+    throw new Error("notifier is down");
+  };
+  return {
+    runStarted: boom,
+    stageStarted: boom,
+    stageFinished: boom,
+    gateWaiting: boom,
+    gateResolved: boom,
+    followupCreated: boom,
+    runFinished: boom,
+  };
+}
+
+test("gated pipeline: still completes even when every events handler throws (runPipeline wraps events itself)", async () => {
+  const repo = await makeRepo();
+  const runnerDir = await mkdtemp(join(tmpdir(), "sdlc-events-runner-"));
+  const config: Config = { ...makeConfig(repo), autoApprove: false };
+
+  // fakeSource().getStateType always reports "completed", so every gate is approved on the
+  // first poll — this run exercises setupGates/gateWaiting/gateResolved, not just the
+  // autoApprove short-circuit the other pipeline test takes.
+  await withStubs(() => runPipeline(TICKET, config, fakeSource(), runnerDir, throwingEvents()));
+
+  const live = JSON.parse(await readFile(join(runnerDir, ".state", `${TICKET.key}.live.json`), "utf8")) as { phase: string };
+  assert.equal(live.phase, "done", "the run must reach normal completion despite every event handler throwing");
+
+  const log = JSON.parse(await readFile(join(runnerDir, ".state", `${TICKET.key}.json`), "utf8")) as Array<{ stage: string; ok: boolean }>;
+  const gate01 = log.find((e) => e.stage === "gate:01-plan");
+  assert.equal(gate01?.ok, true, "the 01-plan gate must have been approved, not skipped, in this non-autoApprove run");
+});
+
+test("gated pipeline: gateWaiting for 01-plan fires before its gateResolved(approved=true)", async () => {
+  const repo = await makeRepo();
+  const runnerDir = await mkdtemp(join(tmpdir(), "sdlc-events-runner-"));
+  const config: Config = { ...makeConfig(repo), autoApprove: false };
+
+  const calls: Array<{ name: string; stage?: string; approved?: boolean }> = [];
+  const events: PipelineEvents = {
+    ...noopEvents,
+    gateWaiting: async (key, stage) => {
+      calls.push({ name: "gateWaiting", stage });
+    },
+    gateResolved: async (key, stage, approved) => {
+      calls.push({ name: "gateResolved", stage, approved });
+    },
+  };
+
+  await withStubs(() => runPipeline(TICKET, config, fakeSource(), runnerDir, events));
+
+  const waitingIdx = calls.findIndex((c) => c.name === "gateWaiting" && c.stage === "01-plan");
+  const resolvedIdx = calls.findIndex((c) => c.name === "gateResolved" && c.stage === "01-plan" && c.approved === true);
+  assert.notEqual(waitingIdx, -1, "gateWaiting for 01-plan must fire");
+  assert.notEqual(resolvedIdx, -1, "gateResolved(01-plan, approved=true) must fire");
+  assert.ok(waitingIdx < resolvedIdx, "gateWaiting must precede gateResolved for the same stage");
 });
