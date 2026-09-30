@@ -66,5 +66,31 @@ export function createJiraAdapter(_opts: JiraAdapterOptions): TicketSource {
       // each to { body, author: author.displayName, createdAt: created }.
       throw new Error("not implemented: read Jira issue comments here");
     },
+
+    async setStateType(_issueId, _type) {
+      // GET {baseUrl}/rest/api/3/issue/{issueId}/transitions to find a
+      // transition whose target status.statusCategory.key matches _type
+      // ("done" for "completed"; the project's Canceled/Won't Do resolution
+      // for "canceled"), then POST {baseUrl}/rest/api/3/issue/{issueId}/transitions
+      // with body { transition: { id } }. Throw if no matching transition exists.
+      throw new Error("not implemented: transition a Jira issue to the given status category here");
+    },
+
+    async listRecentIssues(_sinceIso) {
+      // GET {baseUrl}/rest/api/3/search?jql=project={projectKey} AND
+      // created > "_sinceIso" AND parent is EMPTY ORDER BY created ASC&maxResults=50,
+      // mapping each issue to { id, key, title: fields.summary,
+      // body: fields.description, labels: fields.labels, url, createdAt: fields.created,
+      // creator: fields.creator.displayName }.
+      throw new Error("not implemented: search recent parentless Jira issues here");
+    },
+
+    async getTicket(_idOrKey) {
+      // GET {baseUrl}/rest/api/3/issue/{idOrKey} (Jira accepts either the key,
+      // e.g. "ENG-12", or the numeric id) and map the same way as createTicket's
+      // response: { id, key, title: fields.summary, body: fields.description,
+      // labels: fields.labels, url }.
+      throw new Error("not implemented: look up a Jira issue by key or id here");
+    },
   };
 }

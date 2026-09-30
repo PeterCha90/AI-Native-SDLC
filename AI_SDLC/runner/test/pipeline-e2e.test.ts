@@ -110,6 +110,15 @@ function recordingSource(states: Record<string, StateType[]>): Recorder {
     listComments: async (): Promise<IssueComment[]> => [
       { body: "영향 범위가 틀렸다", author: "po", createdAt: "2026-01-01T00:00:00Z" },
     ],
+    setStateType: async () => {
+      throw new Error("unused");
+    },
+    listRecentIssues: async () => {
+      throw new Error("unused");
+    },
+    getTicket: async () => {
+      throw new Error("unused");
+    },
   };
   return { source, created, comments, polled };
 }

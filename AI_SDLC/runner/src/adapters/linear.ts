@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import type { IssueComment, NewTicket, StateType, Ticket, TicketSource } from "./types.ts";
+import type { IssueComment, NewTicket, RecentIssue, StateType, Ticket, TicketSource } from "./types.ts";
 
 export interface LinearAdapterOptions {
   webhookSecret: string;
@@ -226,6 +226,118 @@ export function createLinearAdapter(opts: LinearAdapterOptions): TicketSource {
           createdAt: c.createdAt,
         }))
         .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    },
+
+    async setStateType(issueId, type): Promise<void> {
+      const data = await graphql<{
+        issue: { team: { states: { nodes: Array<{ id: string; position: number }> } } } | null;
+      }>(
+        apiKey,
+        `query($id: String!, $type: String!) {
+          issue(id: $id) {
+            team {
+              states(filter: { type: { eq: $type } }) {
+                nodes { id position }
+              }
+            }
+          }
+        }`,
+        { id: issueId, type },
+      );
+      const states = data.issue?.team.states.nodes ?? [];
+      if (states.length === 0) {
+        throw new Error(`팀 워크플로에 ${type} 상태가 없다`);
+      }
+      const target = states.reduce((min, s) => (s.position < min.position ? s : min));
+      await graphql<{ issueUpdate: { success: boolean } }>(
+        apiKey,
+        `mutation($id: String!, $input: IssueUpdateInput!) {
+          issueUpdate(id: $id, input: $input) { success }
+        }`,
+        { id: issueId, input: { stateId: target.id } },
+      );
+    },
+
+    async listRecentIssues(sinceIso): Promise<RecentIssue[]> {
+      const data = await graphql<{
+        issues: {
+          nodes: Array<{
+            id: string;
+            identifier: string;
+            title: string;
+            description: string | null;
+            url: string;
+            createdAt: string;
+            creator: { name: string } | null;
+            labels: { nodes: Array<{ name: string }> };
+          }>;
+        };
+      }>(
+        apiKey,
+        `query($teamId: ID!, $since: DateTimeOrDuration!) {
+          issues(first: 50, filter: { team: { id: { eq: $teamId } }, createdAt: { gt: $since }, parent: { null: true } }) {
+            nodes {
+              id
+              identifier
+              title
+              description
+              url
+              createdAt
+              creator { name }
+              labels { nodes { name } }
+            }
+          }
+        }`,
+        { teamId, since: sinceIso },
+      );
+      return data.issues.nodes
+        .map((issue) => ({
+          id: issue.id,
+          key: issue.identifier,
+          title: issue.title,
+          body: issue.description ?? "",
+          labels: issue.labels.nodes.map((l) => l.name),
+          url: issue.url,
+          createdAt: issue.createdAt,
+          creator: issue.creator?.name ?? "unknown",
+        }))
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    },
+
+    async getTicket(idOrKey): Promise<Ticket> {
+      const data = await graphql<{
+        issue: {
+          id: string;
+          identifier: string;
+          title: string;
+          description: string | null;
+          url: string;
+          labels: { nodes: Array<{ name: string }> };
+        } | null;
+      }>(
+        apiKey,
+        `query($id: String!) {
+          issue(id: $id) {
+            id
+            identifier
+            title
+            description
+            url
+            labels { nodes { name } }
+          }
+        }`,
+        { id: idOrKey },
+      );
+      if (!data.issue) throw new Error(`Linear issue ${idOrKey} not found`);
+      const issue = data.issue;
+      return {
+        id: issue.id,
+        key: issue.identifier,
+        title: issue.title,
+        body: issue.description ?? "",
+        labels: issue.labels.nodes.map((l) => l.name),
+        url: issue.url,
+      };
     },
   };
 }

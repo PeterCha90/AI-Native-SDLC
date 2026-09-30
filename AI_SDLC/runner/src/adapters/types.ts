@@ -31,6 +31,12 @@ export interface IssueComment {
   createdAt: string;
 }
 
+/** A ticket discovered by polling rather than by webhook, with the extra fields that entails. */
+export interface RecentIssue extends Ticket {
+  createdAt: string;
+  creator: string;
+}
+
 export interface TicketSource {
   name: string;
   /** Verify a webhook request is authentic. Must use a timing-safe compare. */
@@ -45,4 +51,10 @@ export interface TicketSource {
   getStateType(issueId: string): Promise<StateType>;
   /** Oldest first. Used to read the rejection reason a human left on a canceled gate. */
   listComments(issueId: string): Promise<IssueComment[]>;
+  /** Move an issue to the workflow's state of the given type. Used to move approval-gate cards from Slack. */
+  setStateType(issueId: string, type: "completed" | "canceled"): Promise<void>;
+  /** Parentless issues created since `sinceIso`, oldest first, capped at 50. Used to poll for new tickets. */
+  listRecentIssues(sinceIso: string): Promise<RecentIssue[]>;
+  /** Look up a single ticket by its human-readable key (e.g. "ENG-12") or internal id. */
+  getTicket(idOrKey: string): Promise<Ticket>;
 }
