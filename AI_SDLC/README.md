@@ -1,6 +1,6 @@
 <p align="center">
   <img src="https://img.shields.io/badge/AI--native-SDLC-blueviolet?style=for-the-badge" alt="AI-native SDLC" />
-  <img src="https://img.shields.io/badge/version-0.2.1-blue?style=for-the-badge" alt="Version" />
+  <img src="https://img.shields.io/badge/version-0.3.0-blue?style=for-the-badge" alt="Version" />
   <img src="https://img.shields.io/badge/Claude_Code-plugin-orange?style=for-the-badge" alt="Claude Code plugin" />
   <img src="https://img.shields.io/badge/node-%3E%3D22-brightgreen?style=for-the-badge" alt="Node >= 22" />
 </p>
@@ -14,22 +14,42 @@
 
 ---
 
-<p align="center">
-  <img src="docs/assets/dashboard.png" alt="AI-SDLC 파이프라인 대시보드" width="100%" />
-</p>
+```
+#ai-sdlc-updates
+🆕 ENG-12 로그인 폼이 빈 값을 저장함 — @minji · sdlc-auto 아님
+[▶ 파이프라인 시작]  [무시]
 
-자동 모드에서 러너가 띄우는 대시보드(`http://localhost:3939/`). 티켓마다 단계 흐름, 승인 대기 중인 역할, 06이 만든 후속 티켓이 한 화면에 보인다.
+┗━ 🧵 스레드
+   ▶ 시작함 (by @minji)
+   ⏳ 01 Plan 실행 중
+   ✅ 01 Plan 완료 (4분)
+   ⏳ 02 Design 실행 중
+   ✅ 02 Design 완료 (3분)
+   ⏳ 03 Build 실행 중
+   ✅ 03 Build 완료 (12분)
+   ⏳ 04 Test 실행 중
+
+   🔐 게이트: 04 Test 승인 대기 — @product-owners
+   unit 12/12 통과 · e2e 1건 실패(로그인 폼 빈 값 저장)
+   산출물: docs/plan/ENG-12.md · Linear: ENG-12 › 04-test
+   [✅ 승인]  [⛔ 반려]
+
+   ✅ @minji 승인 — 다음 단계로 진행
+```
+
+러너가 Slack 채널에 올리는 알림·진행·게이트 메시지의 실제 모양이다(캡처 전까지는 텍스트 예시). 같은 정보가 Linear 원 티켓 아래 게이트 하위 이슈 6개에도 남는다.
 
 ---
 
-## 두 가지 사용법
+## 세 가지 사용법
 
 | 방식 | 시작 방법 | 승인은 어디서 | 필요한 것 |
 | --- | --- | --- | --- |
 | **A. 대화형** | Claude Code에서 `/sdlc-run ENG-12` | 대화창에서 "진행해" | 플러그인만 |
 | **B. 자동** | Linear에 티켓을 만들면 러너가 받아서 시작 | Linear 게이트 카드를 Done으로 | 플러그인 + 러너 + Linear webhook |
+| **C. Slack** | Slack 알림의 [▶ 시작] 또는 `/sdlc <제목>` | Slack 버튼(역할 확인) 또는 Linear 게이트 카드 | 플러그인 + 러너 + Slack 앱 |
 
-처음이라면 **A로 한 티켓을 끝까지 돌려 보고**, 팀 단위로 굴릴 때 B로 넘어가길 권한다. 두 방식 모두 1~2단계(설치와 저장소 준비)는 같다.
+처음이라면 **A로 한 티켓을 끝까지 돌려 보고**, 팀 단위로 굴릴 때 B나 C로 넘어가길 권한다. 세 방식 모두 1~2단계(설치와 저장소 준비)는 같다.
 
 ---
 
@@ -61,7 +81,7 @@ cd ~/code/my-app
 claude -p "네가 쓸 수 있는 sdlc-* 스킬과 명령 이름만 한 줄씩 출력해라" < /dev/null
 ```
 
-스킬 7개(`sdlc-intent` … `sdlc-maintain`)와 명령 4개(`/sdlc-init`, `/sdlc-run`, `/sdlc-status`, `/sdlc-visualize`)가 나오면 된다. 다른 플러그인과 이름이 겹치면 `/ai-native-sdlc:sdlc-run`처럼 앞에 플러그인 이름을 붙여 부른다.
+스킬 7개(`sdlc-intent` … `sdlc-maintain`)와 명령 3개(`/sdlc-init`, `/sdlc-run`, `/sdlc-status`)가 나오면 된다. 다른 플러그인과 이름이 겹치면 `/ai-native-sdlc:sdlc-run`처럼 앞에 플러그인 이름을 붙여 부른다.
 
 ### 업데이트
 
@@ -175,10 +195,9 @@ Linear → Settings → API → Webhooks에서 `<ngrok 주소>/webhook/linear`�
 
 ### 티켓 하나 흘려 보내기
 
-1. 브라우저에서 `http://localhost:3939/`을 연다.
-2. Linear에 티켓을 만든다. 대시보드에 카드가 생기고 `00 Setup`이 돈다.
-3. 원 티켓 아래에 `[gate] 01-plan — 승인자: Product Owner`부터 `06-maintain`까지 하위 이슈 6개가 생긴다.
-4. 단계가 끝날 때마다 대시보드에 노란 **승인 대기** 칩이 뜨고, 게이트 카드에 요약 코멘트가 달린다. 산출물을 보고 카드를 옮긴다.
+1. `curl -s localhost:3939/health`로 러너가 떠 있는지 확인한다.
+2. Linear에 티켓을 만든다. `00 Setup`이 돌고, 원 티켓 아래에 `[gate] 01-plan — 승인자: Product Owner`부터 `06-maintain`까지 하위 이슈 6개가 생긴다.
+3. 단계가 끝날 때마다 해당 게이트 카드에 요약 코멘트가 달린다. 산출물을 보고 카드를 옮긴다.
 
 | 게이트 카드를 | 러너 동작 |
 | --- | --- |
@@ -186,10 +205,79 @@ Linear → Settings → API → Webhooks에서 `<ngrok 주소>/webhook/linear`�
 | `Canceled` 로 옮김 | 반려 — 파이프라인 중단, 마지막 코멘트를 사유로 기록 |
 | 그대로 둠 | 대기 — 10초마다 확인, 30분이 지나면 중단 |
 
-5. `05 Deploy`에서 `sdlc/<키>` 브랜치로 PR이 열린다.
-6. `06 Maintain`이 3σ로 판정하면 `sdlc-auto` 라벨을 단 새 티켓이 생기고, 그 티켓으로 다시 01부터 시작한다. 대시보드에는 `↺ 06 → 새 티켓 → 01`로 표시된다.
+4. `05 Deploy`에서 `sdlc/<키>` 브랜치로 PR이 열린다.
+5. `06 Maintain`이 3σ로 판정하면 `sdlc-auto` 라벨을 단 새 티켓이 생기고, 그 티켓으로 다시 01부터 시작한다. 원 티켓에 후속 티켓 링크가 코멘트로 남는다.
 
-사람 승인 없이 흐름만 확인하려면 `SDLC_AUTO_APPROVE=1 npm start`로 켠다. 게이트를 전부 건너뛰고, 대시보드에 `리허설 모드(자동 승인)`가 표시된다.
+사람 승인 없이 흐름만 확인하려면 `SDLC_AUTO_APPROVE=1 npm start`로 켠다. 게이트를 전부 건너뛰고, 건너뛸 때마다 러너 로그에 "리허설 모드(자동 승인)"가 찍힌다.
+
+---
+
+## 3-C. Slack으로 쓰기
+
+러너가 Linear 티켓 알림과 승인 버튼을 Slack 채널에 올린다. 공개 URL이 필요 없다 — Socket Mode로 붙는다.
+
+### 앱 만들기
+
+| 순서 | 할 일 |
+| --- | --- |
+| ① | [api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → **From a manifest** → 워크스페이스 선택 → `runner/slack/manifest.yaml` 내용을 붙여넣는다 |
+| ② | **Install to Workspace** → 발급된 **Bot Token**(`xoxb-…`)을 복사한다 |
+| ③ | 왼쪽 메뉴 **Basic Information** → **App-Level Tokens** → `connections:write` 스코프로 토큰을 만들고 **App-Level Token**(`xapp-…`)을 복사한다 |
+| ④ | 알림을 받을 채널에서 `/invite @AI-SDLC`로 봇을 초대한다. 채널 상세 정보 맨 아래에서 채널 ID(`C…`)를 복사한다 |
+| ⑤ | 승인 역할마다 Slack 사용자 그룹을 만들거나 기존 그룹을 쓴다. 그룹 프로필 페이지 URL 끝의 `S…`가 사용자 그룹 ID다 |
+
+### ⑥ 설정·환경변수
+
+`sdlc.config.json`에 추가한다:
+
+```json
+{
+  "linearTrigger": "poll",
+  "linearPollIntervalMs": 30000,
+  "slack": {
+    "channelId": "C0123456789",
+    "startMode": "button",
+    "roleGroups": {
+      "Product Owner": "S0PRODUCT",
+      "Engineer": "S0ENG",
+      "Code Owner": "S0CODEOWN",
+      "Release Manager": "S0RELEASE",
+      "Service Owner": "S0SRE"
+    }
+  }
+}
+```
+
+| 변수 | 값 |
+| --- | --- |
+| `SLACK_BOT_TOKEN` | ②에서 복사한 `xoxb-…` |
+| `SLACK_APP_TOKEN` | ③에서 복사한 `xapp-…`(`connections:write`) |
+
+두 값이 모두 있어야 Slack 기능이 켜진다. 하나라도 없으면 기존 webhook 방식 그대로 동작한다. Slack이 켜지면 `linearTrigger` 기본값은 `"poll"`(30초 간격)이라 `LINEAR_WEBHOOK_SECRET`이 필요 없다. `"webhook"`으로 바꾸면 기존 webhook 경로를 그대로 쓴다.
+
+### ⑦ 실행
+
+```bash
+npm start
+```
+
+기동 로그에 Slack 연결 상태, 채널, 역할 매핑, 폴링 주기가 한 번에 찍힌다. 봇이 채널에 없으면(`not_in_channel`) 이 시점에 바로 알려준다.
+
+### ⑧ 사용법
+
+| 상황 | 화면 |
+| --- | --- |
+| Linear에 새 티켓 | 채널에 알림 + `[▶ 파이프라인 시작]` `[무시]` |
+| `/sdlc <제목>` | Linear에 티켓을 만들고 같은 알림을 올린다 |
+| `/sdlc run ENG-12` | 기존 티켓으로 파이프라인 시작 |
+| `/sdlc status` | 진행 중인 실행과 각 실행의 현재 단계·대기 역할 (나에게만 보임) |
+| `/sdlc help` | 명령 사용법 (나에게만 보임) |
+| 단계 진행 | 티켓 스레드에 `⏳ 01 Plan 실행 중` → `✅ 01 Plan 완료 (4분)` |
+| 게이트 열림 | 스레드에 승인 역할 멘션 + 요약 + `[✅ 승인]` `[⛔ 반려]`, 채널에도 한 번 더 보임 |
+
+### ⑨ 누가 시작할 수 있는가
+
+**봇이 들어간 채널의 멤버는 누구나 `/sdlc`와 `[▶ 시작]`으로 파이프라인을 시작할 수 있다.** 러너가 저장소에서 `claude -p`를 권한 우회 모드로 돌리기 때문이다 — 채널 초대를 그만큼 신중히 한다.
 
 ---
 
@@ -230,7 +318,7 @@ Linear → Settings → API → Webhooks에서 `<ngrok 주소>/webhook/linear`�
 | --- | --- | --- |
 | `repoPath` | `../demo` | 파이프라인이 작업할 저장소. **내 저장소로 바꾼다** |
 | `linearTeamId` | — | Linear 팀 ID |
-| `port` | `3939` | webhook과 대시보드 포트. `PORT` 환경변수가 우선한다 |
+| `port` | `3939` | `GET /health`와 webhook 포트. `PORT` 환경변수가 우선한다 |
 | `useWorktree` | `true` | 티켓마다 별도 worktree에서 작업 |
 | `e2eDriver` / `demoAppUrl` | `ego-lite` / `http://localhost:5173` | 04 Test의 e2e 도구와 열어 볼 주소 |
 | `gatePollIntervalMs` | `10000` | 게이트 확인 간격 |
@@ -243,7 +331,9 @@ Linear → Settings → API → Webhooks에서 `<ngrok 주소>/webhook/linear`�
 | 변수 | 설명 |
 | --- | --- |
 | `LINEAR_API_KEY` | 자동 모드 필수. 게이트 상태 조회와 코멘트에 쓴다 |
-| `LINEAR_WEBHOOK_SECRET` | 자동 모드 필수. webhook 서명 검증 |
+| `LINEAR_WEBHOOK_SECRET` | `linearTrigger: "webhook"`일 때 필수. webhook 서명 검증. Slack이 켜져 기본값이 `"poll"`이면 필요 없다 |
+| `SLACK_BOT_TOKEN` | Slack 봇 필수(둘 중 하나라도 없으면 Slack 기능이 꺼진다). `xoxb-…` |
+| `SLACK_APP_TOKEN` | Slack 봇 필수. `connections:write` 스코프의 `xapp-…`, Socket Mode용 |
 | `SDLC_AUTO_APPROVE` | `1`이면 게이트 전부 건너뜀 |
 | `SDLC_BUGFIX` | `1`이면 테스트 파일 편집 차단 (`protect-tests`) |
 | `RELEASE_APPROVED` | `1`이어야 프로덕션 배포 명령 허용 (`production-gate`) |
@@ -258,7 +348,9 @@ Linear → Settings → API → Webhooks에서 `<ngrok 주소>/webhook/linear`�
 | `marketplace add`가 저장소를 못 찾는다 | 저장소가 비공개면 접근 권한이 있는 GitHub 계정으로 git 인증이 돼 있어야 한다 (`gh auth status`) |
 | 04 Test의 e2e가 매번 실패하고 06이 후속 티켓을 계속 만든다 | e2e는 `ego-browser`로 `demoAppUrl`을 연다. `printf 'cliLog("ok")\n' \| ego-browser nodejs 2>&1`이 `ok`를 출력하는지, 앱이 그 주소에 떠 있는지 확인한다. 자동 티켓은 깊이 3에서 멈춘다 |
 | `npm start`가 바로 종료된다 | 출력된 `[config]` 메시지대로 `LINEAR_API_KEY`, `LINEAR_WEBHOOK_SECRET`, `linearTeamId`를 채운다 |
-| 티켓을 만들어도 대시보드에 카드가 안 생긴다 | 터널이 살아 있는지, webhook URL이 `/webhook/linear`로 끝나는지 확인한다. 서명이 틀리면 러너 로그에 401이 찍힌다 |
+| 티켓을 만들어도 파이프라인이 시작되지 않는다(webhook 모드) | 터널이 살아 있는지, webhook URL이 `/webhook/linear`로 끝나는지 확인한다. 서명이 틀리면 러너 로그에 401이 찍힌다 |
+| Slack 봇 초대 없이 채널에 알림이 안 온다(`not_in_channel`) | 알림을 보낼 채널에 `/invite @AI-SDLC`로 봇을 초대했는지 확인한다 |
+| Slack 버튼을 눌러도 반응이 없다 | 러너가 떠 있는지(`curl -s localhost:3939/health`) 확인하고, Socket Mode 연결이 끊기지 않았는지 로그를 본다. 끊긴 동안에도 Linear 카드를 직접 옮기면 승인은 그대로 된다 |
 | `no approval-gate map` 으로 멈춘다 | `00 Setup`이 Linear MCP로 하위 이슈를 못 만든 것이다. Claude Code에서 `/mcp`로 Linear 연결을 확인한다 |
 | 승인했는데 다음 단계로 안 간다 | 카드가 Done 계열 상태(`completed`)인지 확인한다. 팀 워크플로에 Done과 Canceled가 있어야 한다 |
 | 03에서 커밋이 막힌다 | `plan-drift`가 계획 밖 파일을 막은 것이다. `plan.md`를 고쳐 다시 승인받거나 변경을 되돌린다 |
@@ -275,9 +367,11 @@ AI_SDLC/
 │   ├── skills/                       # sdlc-intent, spec, plan, test, e2e, review, maintain
 │   ├── hooks/                        # 위 표의 hook 8개 + hooks.json
 │   ├── agents/                       # verifier, e2e-reviewer
-│   ├── commands/                     # /sdlc-init, /sdlc-run, /sdlc-status, /sdlc-visualize
+│   ├── commands/                     # /sdlc-init, /sdlc-run, /sdlc-status
 │   └── templates/                    # /sdlc-init이 까는 CLAUDE.md·REVIEW.md·ops/ 템플릿
-├── runner/                           # 자동 모드 러너 (webhook, 게이트, 대시보드)
+├── runner/                           # 자동 모드 러너 (webhook, 게이트, Slack 봇)
+│   ├── slack/manifest.yaml           # Slack 앱 매니페스트
+│   ├── src/slack/                    # Bolt 앱, 역할 확인, 메시지, 알림
 │   └── sdlc.config.json
 ├── demo/                             # 플러그인을 적용해 둔 예시 저장소
 └── docs/

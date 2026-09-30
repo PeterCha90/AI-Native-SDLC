@@ -2,7 +2,7 @@
 
 [AI-Native SDLC Playbook](https://claude.com/blog/the-ai-native-sdlc-playbook)의 6단계(Plan/Design/Build/Test/Deploy/Maintain)와
 3층 가드레일(CLAUDE.md/skills/hooks)을 자기 저장소에 그대로 적용하는 Claude Code 플러그인이다. 이 문서는 플러그인이
-실제로 담고 있는 것 — skill 7개, hook 8개, agent 2개, command 4개, `templates/`(CLAUDE.md·REVIEW.md·ops 템플릿) — 을 산출물 종류별로
+실제로 담고 있는 것 — skill 7개, hook 8개, agent 2개, command 3개, `templates/`(CLAUDE.md·REVIEW.md·ops 템플릿) — 을 산출물 종류별로
 정리한 참조 문서다. 어떤 SDLC 단계에서 어떤 파일이 관여하는지(단계 기준 정리)는 이 문서가 아니라
 [`AI_SDLC/docs/stage-map.md`](../docs/stage-map.md)를 본다.
 
@@ -57,7 +57,7 @@ claude --plugin-dir /path/to/AI_SDLC/plugin
 cd AI_SDLC/demo && claude -p "네가 쓸 수 있는 sdlc-* 스킬 이름만 한 줄씩 출력해라" < /dev/null
 ```
 
-skill 7개 + command 4개, 총 11줄이 나오면 정상이다.
+skill 7개 + command 3개, 총 10줄이 나오면 정상이다.
 
 설치 후 대상 저장소에서 `/sdlc-init`을 실행하면 `templates/`의 `CLAUDE.md.template`·`REVIEW.md`·`ops/`를 저장소 루트에 깔고(기존 파일은 덮어쓰지 않음) `CLAUDE.md`의 명령어 칸을 채운다.
 
@@ -273,7 +273,7 @@ black, Go → gofmt), 이어서 린트를 돌린다(eslint, ruff, go vet). 포�
 Read/Bash로 찾는다. 캡처한 스냅샷을 spec.md 요구사항, plan.md 성공 기준과 대조해 보고한다. 화면이
 열렸다는 사실만으로 통과라 판단하지 않으며, 코드를 고치지 않는다.
 
-## commands (4개)
+## commands (3개)
 
 ### `/sdlc-init`
 
@@ -306,17 +306,11 @@ Read/Bash로 찾는다. 캡처한 스냅샷을 spec.md 요구사항, plan.md 성
 있다면 세션 트랜스크립트 경로(`~/.claude/projects/<project-slug>/<session-id>.jsonl`, 가장 최근 파일은
 `ls -t ~/.claude/projects/*/*.jsonl | head -1`)도 함께 출력한다.
 
-### `/sdlc-visualize`
-
-이 플러그인은 별도 시각화 도구를 쓰지 않는다. 러너(`AI_SDLC/runner`) 자신이 `http://localhost:3939/`에서
-파이프라인 대시보드를 서빙한다 — `curl -s localhost:3939/health`로 러너가 떠 있는지 먼저 확인한 뒤 그
-주소를 열면 된다. 대시보드는 티켓 실행(run)마다 카드 하나, 카드 안에 7개 컬럼(00 Setup, 01 Plan … 06
-Maintain)과 각 컬럼 아래 승인 게이트 칩(승인자 역할, 승인 대기/승인/반려/자동 승인, Linear 게이트 하위
-이슈 링크)을 보여준다. 지금 도는 단계는 하이라이트되고, 게이트가 대기 중이면 어느 역할이 어느 Linear
-카드를 Done으로 옮겨야 하는지 그대로 적힌다. 06이 후속 티켓을 열면 "↺ 06 → 새 티켓 → 01"로 새 실행의
-카드에 링크된다. 대시보드가 읽는 원본은 `GET /api/runs`이고, 그 데이터는 `docs/intent/`, `docs/spec/`,
-`docs/plan/` 같은 문서 산출물이 아니라 `runner/.state/` 아래 단계 로그·게이트 맵·라이브 상태·메타
-파일이다. 세션 `.jsonl` 경로는 "세션 로그"로 대시보드에 함께 표시되지만 디버깅용 참고 정보일 뿐이다.
+진행 현황은 별도 시각화 도구 없이 두 곳에서 본다. **Linear 원 티켓 아래 게이트 하위 이슈 6개**가
+단계별 승인 현황판이고(지금 도는 단계는 하위 이슈 순서로, 게이트가 대기 중이면 어느 역할이 어느 카드를
+Done으로 옮겨야 하는지가 그 카드 코멘트에 적힌다), 06이 후속 티켓을 열면 원 티켓에 링크 코멘트가 남는다.
+러너의 Slack 봇이 켜져 있으면 같은 정보를 티켓 스레드가 실시간으로 보여준다(`AI_SDLC/README.md`의
+"3-C. Slack으로 쓰기" 참고).
 
 ## templates/CLAUDE.md.template
 
@@ -344,13 +338,12 @@ Maintain)과 각 컬럼 아래 승인 게이트 칩(승인자 역할, 승인 대
 cd AI_SDLC/demo && claude -p "네가 쓸 수 있는 sdlc-* 스킬 이름만 한 줄씩 출력해라" < /dev/null
 ```
 
-실제 출력(11줄 — skill 7개 + command 4개):
+실제 출력(10줄 — skill 7개 + command 3개):
 
 ```
 ai-native-sdlc:sdlc-init
 ai-native-sdlc:sdlc-run
 ai-native-sdlc:sdlc-status
-ai-native-sdlc:sdlc-visualize
 ai-native-sdlc:sdlc-intent
 ai-native-sdlc:sdlc-spec
 ai-native-sdlc:sdlc-plan
