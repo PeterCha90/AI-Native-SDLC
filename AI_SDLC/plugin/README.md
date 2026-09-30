@@ -2,13 +2,20 @@
 
 [AI-Native SDLC Playbook](https://claude.com/blog/the-ai-native-sdlc-playbook)의 6단계(Plan/Design/Build/Test/Deploy/Maintain)와
 3층 가드레일(CLAUDE.md/skills/hooks)을 자기 저장소에 그대로 적용하는 Claude Code 플러그인이다. 이 문서는 플러그인이
-실제로 담고 있는 것 — skill 7개, hook 8개, agent 2개, command 3개, `CLAUDE.md.template` 하나 — 을 산출물 종류별로
+실제로 담고 있는 것 — skill 7개, hook 8개, agent 2개, command 4개, `templates/`(CLAUDE.md·REVIEW.md·ops 템플릿) — 을 산출물 종류별로
 정리한 참조 문서다. 어떤 SDLC 단계에서 어떤 파일이 관여하는지(단계 기준 정리)는 이 문서가 아니라
 [`AI_SDLC/docs/stage-map.md`](../docs/stage-map.md)를 본다.
 
 ## 설치
 
-검증된 경로 둘.
+**권장 — CLI로 설치** (GitHub 저장소를 마켓플레이스로 등록):
+
+```bash
+claude plugin marketplace add PeterCha90/FastCampus
+claude plugin install ai-native-sdlc@ai-sdlc     # --scope project|local 로 범위 지정
+```
+
+저장소 루트의 `.claude-plugin/marketplace.json`이 `./AI_SDLC/plugin`을 `ai-native-sdlc`로 등록한다. 설치 후 Claude Code를 재시작하고, 대상 저장소에서 `/sdlc-init`으로 템플릿을 깐다. 이 저장소를 클론해 개발 중일 때는 아래 두 경로도 쓸 수 있다.
 
 **세션 한 번만 시험**:
 
@@ -50,13 +57,9 @@ claude --plugin-dir /path/to/AI_SDLC/plugin
 cd AI_SDLC/demo && claude -p "네가 쓸 수 있는 sdlc-* 스킬 이름만 한 줄씩 출력해라" < /dev/null
 ```
 
-skill 7개 + command 3개, 총 10줄이 나오면 정상이다.
+skill 7개 + command 4개, 총 11줄이 나오면 정상이다.
 
-설치 후 저장소 루트에 `CLAUDE.md.template`을 복사해 채운다:
-
-```
-cp $CLAUDE_PLUGIN_ROOT/CLAUDE.md.template ./CLAUDE.md
-```
+설치 후 대상 저장소에서 `/sdlc-init`을 실행하면 `templates/`의 `CLAUDE.md.template`·`REVIEW.md`·`ops/`를 저장소 루트에 깔고(기존 파일은 덮어쓰지 않음) `CLAUDE.md`의 명령어 칸을 채운다.
 
 ## skills (7개)
 
@@ -270,7 +273,11 @@ black, Go → gofmt), 이어서 린트를 돌린다(eslint, ruff, go vet). 포�
 Read/Bash로 찾는다. 캡처한 스냅샷을 spec.md 요구사항, plan.md 성공 기준과 대조해 보고한다. 화면이
 열렸다는 사실만으로 통과라 판단하지 않으며, 코드를 고치지 않는다.
 
-## commands (3개)
+## commands (4개)
+
+### `/sdlc-init`
+
+현재 저장소에 `templates/`의 `CLAUDE.md`·`REVIEW.md`·`ops/bands.yaml`·`ops/detect.sh`를 깐다. 이미 있는 파일은 건너뛰고, `package.json`/`Makefile`/`pyproject.toml`에서 명령어를 찾아 `CLAUDE.md`를 채우며, 확신이 없는 칸은 `<확인 필요>`로 남긴다. 커밋은 사람에게 맡긴다.
 
 ### `/sdlc-run <ticket-id>`
 
@@ -311,7 +318,7 @@ Maintain)과 각 컬럼 아래 승인 게이트 칩(승인자 역할, 승인 대
 `docs/plan/` 같은 문서 산출물이 아니라 `runner/.state/` 아래 단계 로그·게이트 맵·라이브 상태·메타
 파일이다. 세션 `.jsonl` 경로는 "세션 로그"로 대시보드에 함께 표시되지만 디버깅용 참고 정보일 뿐이다.
 
-## CLAUDE.md.template
+## templates/CLAUDE.md.template
 
 설치 후 저장소 루트에 `CLAUDE.md`로 복사해 채우는 템플릿이다(`명령어`/`컨벤션`/`아키텍처`/`반복된 실수`/
 `AI-native SDLC 참고` 섹션으로 구성). 원문 규칙을 그대로 따른다: **CLAUDE.md는 저장소 컨텍스트를 담는
@@ -337,9 +344,10 @@ Maintain)과 각 컬럼 아래 승인 게이트 칩(승인자 역할, 승인 대
 cd AI_SDLC/demo && claude -p "네가 쓸 수 있는 sdlc-* 스킬 이름만 한 줄씩 출력해라" < /dev/null
 ```
 
-실제 출력(10줄 — skill 7개 + command 3개):
+실제 출력(11줄 — skill 7개 + command 4개):
 
 ```
+ai-native-sdlc:sdlc-init
 ai-native-sdlc:sdlc-run
 ai-native-sdlc:sdlc-status
 ai-native-sdlc:sdlc-visualize

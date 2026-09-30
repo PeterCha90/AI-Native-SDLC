@@ -136,7 +136,14 @@ npx remotion still <슬라이드ID> out/check.png --scale=0.5 --frame=210   # �
 
 ### 설치
 
-검증된 방법이 두 가지 있다.
+**권장 — CLI 두 줄** (클론 불필요):
+
+```bash
+claude plugin marketplace add PeterCha90/FastCampus
+claude plugin install ai-native-sdlc@ai-sdlc     # 팀 공유는 --scope project
+```
+
+설치 후 Claude Code를 재시작한다. 이 저장소를 클론해 두고 개발 중이라면 아래 두 방법도 된다.
 
 **(a) 세션 단위, 설치 없이**
 
@@ -172,11 +179,7 @@ claude --plugin-dir <AI_SDLC/plugin 경로>
 
 ### 저장소 준비
 
-```bash
-cp AI_SDLC/plugin/CLAUDE.md.template ./CLAUDE.md
-```
-
-그리고 자기 저장소에 맞게 고친다. 규칙 두 개만 지키면 된다.
+대상 저장소에서 Claude Code를 열고 `/sdlc-init`을 실행한다. `CLAUDE.md`·`REVIEW.md`·`ops/bands.yaml`·`ops/detect.sh`를 깔고(기존 파일은 덮어쓰지 않음) `CLAUDE.md`의 명령어 칸을 채운다. 그다음 `CLAUDE.md`를 자기 저장소에 맞게 고친다. 규칙 두 개만 지키면 된다.
 
 - **1페이지를 넘기지 말 것.** 길어지면 읽히지 않는다
 - **같은 실수를 두 번 하면 그 교정을 여기에 적을 것.** 이게 이 파일이 자라는 유일한 방법이다
