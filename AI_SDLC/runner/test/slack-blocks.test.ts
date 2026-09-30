@@ -10,6 +10,7 @@ import {
   rejectModal,
   followupLine,
   runFinishedLine,
+  interviewMessage,
   type ActionValue,
 } from "../src/slack/blocks.ts";
 
@@ -265,6 +266,101 @@ test("gateMessage resolved states have no action buttons", () => {
     });
     assert.equal(findActionsBlock(msg.blocks), undefined, `state ${state} should have no actions`);
   }
+});
+
+test("gateMessage rejected with a rework attempt appends the '재작업 N/M' suffix", () => {
+  const msg = gateMessage({
+    key: "ENG-12",
+    ticketId: "uuid-12",
+    stage: "01-plan",
+    role: "Engineer",
+    summary: "s",
+    gateUrl: "u",
+    state: "rejected",
+    reason: "타입 에러 있음",
+    rework: { attempt: 1, maxAttempts: 3 },
+  });
+  assert.match(msg.text, /재작업 1\/3/);
+});
+
+// ── interviewMessage ─────────────────────────────────────────────────────────
+
+test("interviewMessage open state mentions the requester and lists numbered questions with two buttons", () => {
+  const msg = interviewMessage({
+    key: "ENG-12",
+    ticketId: "uuid-12",
+    questions: ["질문 하나", "질문 둘"],
+    round: 1,
+    maxRounds: 5,
+    requesterId: "U-alice",
+    answerCount: 0,
+    state: "open",
+  });
+  assert.match(msg.text, /<@U-alice>/);
+  assert.match(msg.text, /1\/5/);
+  const questionsBlock = JSON.stringify(msg.blocks);
+  assert.match(questionsBlock, /1\. 질문 하나/);
+  assert.match(questionsBlock, /2\. 질문 둘/);
+  const actions = findActionsBlock(msg.blocks);
+  assert.ok(actions, "open state must have an actions block");
+  const actionIds = actions.elements.map((e: any) => e.action_id);
+  assert.deepEqual(actionIds, [ACTIONS.interviewApply, ACTIONS.interviewProceed]);
+});
+
+test("interviewMessage open state without a requesterId has no mention", () => {
+  const msg = interviewMessage({
+    key: "ENG-12",
+    ticketId: "uuid-12",
+    questions: ["질문"],
+    round: 1,
+    maxRounds: 5,
+    answerCount: 0,
+    state: "open",
+  });
+  assert.doesNotMatch(msg.text, /<@/);
+});
+
+test("interviewMessage escapes mrkdwn in question text", () => {
+  const msg = interviewMessage({
+    key: "ENG-12",
+    ticketId: "uuid-12",
+    questions: ["<script>&"],
+    round: 1,
+    maxRounds: 5,
+    answerCount: 0,
+    state: "open",
+  });
+  const blocksText = JSON.stringify(msg.blocks);
+  assert.doesNotMatch(blocksText, /<script>/);
+  assert.match(blocksText, /&lt;script&gt;/);
+});
+
+test("interviewMessage applied/proceeded states have no action buttons and show who acted", () => {
+  const applied = interviewMessage({
+    key: "ENG-12",
+    ticketId: "uuid-12",
+    questions: ["질문"],
+    round: 1,
+    maxRounds: 5,
+    answerCount: 2,
+    state: "applied",
+    by: "U-po",
+  });
+  assert.equal(findActionsBlock(applied.blocks), undefined);
+  assert.match(applied.text, /<@U-po>/);
+
+  const proceeded = interviewMessage({
+    key: "ENG-12",
+    ticketId: "uuid-12",
+    questions: ["질문"],
+    round: 1,
+    maxRounds: 5,
+    answerCount: 0,
+    state: "proceeded",
+    by: "U-po",
+  });
+  assert.equal(findActionsBlock(proceeded.blocks), undefined);
+  assert.match(proceeded.text, /<@U-po>/);
 });
 
 test("rejectModal uses REJECT_MODAL callback_id and embeds the action value", () => {

@@ -355,6 +355,20 @@ test("notifier: stageStarted then stageFinished update the same message ts", asy
   assert.equal(client.updated[0].ts, startedTs);
 });
 
+test("notifier.stageReworking: updates the existing gate message to show '재작업 1/3'", async () => {
+  const runnerDir = await tmpRunnerDir();
+  const stateDir = join(runnerDir, ".state");
+  const client = fakeClient();
+  const notifier = createSlackNotifier({ client, channel: "C1", stateDir, roleGroups: {} });
+
+  await notifier.gateWaiting("ENG-7", "01-plan", "Product Owner", { issueId: "gate-1", key: "GATE-1", url: "http://x/gate-1" }, "요약");
+  await notifier.stageReworking?.("ENG-7", "01-plan", 1, 3, "재검토 필요");
+
+  assert.ok(client.updated.length >= 1, "the gate message must be updated");
+  const lastUpdate = client.updated[client.updated.length - 1];
+  assert.match(lastUpdate.text, /재작업 1\/3/);
+});
+
 test("notifier.gateWaiting: posts with reply_broadcast true", async () => {
   const runnerDir = await tmpRunnerDir();
   const stateDir = join(runnerDir, ".state");

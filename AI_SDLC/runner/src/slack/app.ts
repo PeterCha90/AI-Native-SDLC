@@ -15,6 +15,7 @@ import { RoleChecker } from "./roles.ts";
 import { readThread, writeThread } from "./threads.ts";
 import { ACTIONS, REJECT_MODAL, ticketNotice, gateMessage, rejectModal, type ActionValue } from "./blocks.ts";
 import { createSlackNotifier, type SlackClientLike } from "./notifier.ts";
+import { createSlackInterviewChannel, type SlackInterviewChannel, type SlackInterviewClient } from "./interview.ts";
 
 // ── isSlackStartupRejection ──────────────────────────────────────────────────
 
@@ -206,6 +207,8 @@ export interface StartSlackAppOptions {
    * `config.linearTrigger === "poll"`, i.e. when index.ts actually has a watcher running.
    */
   markTicketSeen?: (id: string) => Promise<void>;
+  /** The ticket's creator email, remembered by index.ts at enqueue time. Powers the 01 Plan interview's @mention. */
+  getRequesterEmail: (key: string) => string | undefined;
 }
 
 async function updateGateMessage(
@@ -243,12 +246,13 @@ async function updateGateMessage(
  */
 export async function startSlackApp(
   o: StartSlackAppOptions,
-): Promise<{ notifier: ReturnType<typeof createSlackNotifier>; stop(): Promise<void> }> {
+): Promise<{ notifier: ReturnType<typeof createSlackNotifier>; interview: SlackInterviewChannel; stop(): Promise<void> }> {
   if (!o.config.slack) throw new Error("startSlackApp called without config.slack");
   const slackConfig = o.config.slack;
 
   const app = new App({ token: slackConfig.botToken, appToken: slackConfig.appToken, socketMode: true });
   const client = app.client as unknown as SlackClientLike;
+  const interviewClient = app.client as unknown as SlackInterviewClient;
 
   const roles = new RoleChecker({
     roleGroups: slackConfig.roleGroups,
@@ -259,6 +263,14 @@ export async function startSlackApp(
   });
 
   const notifier = createSlackNotifier({ client, channel: slackConfig.channelId, stateDir: o.stateDir, roleGroups: slackConfig.roleGroups });
+
+  const interview = createSlackInterviewChannel({
+    client: interviewClient,
+    channel: slackConfig.channelId,
+    stateDir: o.stateDir,
+    getRequesterEmail: o.getRequesterEmail,
+    timeoutMs: o.config.gateTimeoutMs,
+  });
 
   const gateDeps: GateActionDeps = {
     source: o.source,
@@ -361,6 +373,40 @@ export async function startSlackApp(
     if (result.note) await viewClient.chat.postEphemeral({ channel: slackConfig.channelId, user: userId, text: result.note });
   });
 
+  // Interview buttons: any thread participant can press these — no role check (spec §3.4: "인터뷰는
+  // 승인이 아니다"). ack() first, then delegate to the Slack-SDK-free onButton.
+  function handleInterviewButton(actionId: string, kind: "apply" | "proceed"): void {
+    app.action(actionId, async ({ ack, body, client: actionClient }) => {
+      await ack();
+      const b = body as any;
+      const value: ActionValue = JSON.parse(b.actions[0].value);
+      const userId: string = b.user.id;
+      const result = await interview.onButton(value.key, kind, userId);
+      if (!result.ok) {
+        await actionClient.chat.postEphemeral({ channel: b.channel.id, user: userId, text: result.message ?? "처리할 수 없다" });
+      }
+    });
+  }
+  handleInterviewButton(ACTIONS.interviewApply, "apply");
+  handleInterviewButton(ACTIONS.interviewProceed, "proceed");
+
+  // Thread replies feeding the open interview's answer count (spec §3.4). Requires the
+  // `message.channels`/`message.groups` event subscriptions and `channels:history`/`groups:history`
+  // scopes — see the manifest. `app.message` fires for every message in a subscribed conversation;
+  // `onThreadMessage` itself filters down to "a reply in the currently open interview thread,
+  // not from a bot, not an edit/delete subtype".
+  app.message(async ({ message }) => {
+    const m = message as any;
+    await interview.onThreadMessage({
+      threadTs: m.thread_ts,
+      user: m.user,
+      botId: m.bot_id,
+      subtype: m.subtype,
+      text: m.text ?? "",
+      ts: m.ts,
+    });
+  });
+
   app.command("/sdlc", async ({ ack, command, respond, client: cmdClient }) => {
     await ack();
     const parsed = parseSdlcCommand(command.text ?? "");
@@ -457,6 +503,7 @@ export async function startSlackApp(
 
   return {
     notifier,
+    interview,
     async stop() {
       await app.stop();
     },

@@ -41,10 +41,11 @@ function emptyThread(channel: string, threadTs: string, ticketId: string): Threa
  */
 export function createSlackNotifier(
   o: SlackNotifierOptions,
-): PipelineEvents & {
-  postTicketNotice(t: RecentIssue, state: "new" | "auto"): Promise<void>;
-  markStarted(key: string, by: string): Promise<void>;
-} {
+): PipelineEvents &
+  Required<Pick<PipelineEvents, "stageReworking" | "interviewAnswered">> & {
+    postTicketNotice(t: RecentIssue, state: "new" | "auto"): Promise<void>;
+    markStarted(key: string, by: string): Promise<void>;
+  } {
   const { client, channel, stateDir, roleGroups } = o;
 
   async function ensureThread(key: string, fallbackText: string): Promise<ThreadRecord> {
@@ -139,6 +140,31 @@ export function createSlackNotifier(
         reason,
       });
       await client.chat.update({ channel: rec.channel, ts, text: msg.text, blocks: msg.blocks });
+    },
+
+    async stageReworking(key: string, stage: StageId, attempt: number, maxAttempts: number, reason: string): Promise<void> {
+      const rec = await readThread(stateDir, key);
+      if (!rec) return;
+      const ts = rec.gateTs[stage];
+      if (!ts) return; // no gate message on record — nothing to update (e.g. runner restarted mid-gate).
+      const msg = gateMessage({
+        key,
+        ticketId: rec.ticketId,
+        stage,
+        role: "",
+        summary: "(재작업을 준비한다)",
+        gateUrl: "",
+        state: "rejected",
+        reason,
+        rework: { attempt, maxAttempts },
+      });
+      await client.chat.update({ channel: rec.channel, ts, text: msg.text, blocks: msg.blocks });
+    },
+
+    async interviewAnswered(key: string, round: number, answerCount: number): Promise<void> {
+      const rec = await ensureThread(key, `🆕 ${key}`);
+      const text = `📝 01 Plan 인터뷰 답변 ${answerCount}개 반영 (round ${round}) — intent.md를 다시 쓴다`;
+      await client.chat.postMessage({ channel: rec.channel, thread_ts: rec.threadTs, ...simpleMsg(text) });
     },
 
     async followupCreated(key: string, followup: { key: string; url: string }): Promise<void> {

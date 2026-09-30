@@ -10,6 +10,7 @@ import { noopEvents, safeEvents, type PipelineEvents } from "./events.ts";
 import { LinearWatcher } from "./linear-watcher.ts";
 import { startSlackApp, isSlackStartupRejection } from "./slack/app.ts";
 import type { createSlackNotifier } from "./slack/notifier.ts";
+import { noInterview, type InterviewChannel } from "./interview.ts";
 
 const RUNNER_DIR = dirname(fileURLToPath(import.meta.url)).replace(/\/src$/, "");
 
@@ -122,21 +123,32 @@ export function startServer(): void {
   // Set once Slack starts (if it does) — declared here so the LinearWatcher's onNew closure and
   // the Slack app's markTicketSeen closure can both refer to it without a startup-order dependency.
   let events: PipelineEvents = noopEvents;
+  let interview: InterviewChannel = noInterview;
   let slackNotifier: ReturnType<typeof createSlackNotifier> | null = null;
   let watcher: LinearWatcher<RecentIssue> | null = null;
+
+  // Ticket key -> creator email, remembered the moment a run is enqueued so the Slack interview
+  // channel can mention the right person without threading `creatorEmail` through every caller of
+  // `runPipeline`. Read lazily by `getRequesterEmail` below (passed into `startSlackApp`, which
+  // constructs the interview channel with it) — works whether or not Slack is even on.
+  const requesterEmails = new Map<string, string>();
+  const getRequesterEmail = (key: string): string | undefined => requesterEmails.get(key);
 
   // `isRunActive` covers a key from the moment it's enqueued (queued and waiting, not just once
   // it starts executing) through to `runPipeline` settling — a finished or aborted run is no
   // longer active and CAN be started again (`/sdlc run <키>`, or a fresh "▶ 시작" click), matching
-  // the gate note "이 실행은 중단됐다 — /sdlc run <키>로 다시 시작한다". `events` is read lazily inside
-  // the closure below (not captured at this point), so it sees whatever Slack sets it to later.
-  const { enqueue: enqueueTicket, isActive: isRunActive } = createIdempotentEnqueuer<Ticket>(queue, (ticket) =>
-    runPipeline(ticket, config, source, RUNNER_DIR, events),
-  );
+  // the gate note "이 실행은 중단됐다 — /sdlc run <키>로 다시 시작한다". `events`/`interview` are read
+  // lazily inside the closure below (not captured at this point), so they see whatever Slack sets
+  // them to later.
+  const { enqueue: enqueueTicket, isActive: isRunActive } = createIdempotentEnqueuer<Ticket>(queue, (ticket) => {
+    const key = ticket.key || ticket.id;
+    if (ticket.creatorEmail) requesterEmails.set(key, ticket.creatorEmail);
+    return runPipeline(ticket, config, source, RUNNER_DIR, events, interview);
+  });
 
   async function setupNotifications(): Promise<void> {
     if (config.slack) {
-      const { notifier } = await startSlackApp({
+      const { notifier, interview: slackInterview } = await startSlackApp({
         config,
         source,
         stateDir,
@@ -146,9 +158,11 @@ export function startServer(): void {
         markTicketSeen: async (id: string) => {
           if (watcher) await watcher.markSeen(id);
         },
+        getRequesterEmail,
       });
       slackNotifier = notifier;
       events = safeEvents(notifier);
+      interview = slackInterview;
     }
 
     if (config.linearTrigger === "poll" && !config.slack) {
