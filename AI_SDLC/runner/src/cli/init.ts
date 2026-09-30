@@ -1,7 +1,7 @@
 import { DEFAULT_GATE_ROLES, type FileConfig } from "../config.ts";
 import { repoLayout, type RepoLayout } from "../paths.ts";
 import { readCredentials, readUserConfig, writeCredentials, writeUserConfig, type Credentials } from "../user-config.ts";
-import { checkTokenPrefix, parseChannelInput, type Verifier } from "./verify.ts";
+import { checkTokenPrefix, isSlackUrlLike, parseChannelInput, translateVerifyError, type Verifier } from "./verify.ts";
 
 export interface Prompter {
   text(o: { message: string; initialValue?: string; placeholder?: string }): Promise<string | symbol>;
@@ -31,7 +31,9 @@ type RetryOutcome<V> = { cancelled: true } | { failed: true } | { ok: true; valu
  * Runs `ask` up to `maxAttempts` times, feeding each raw answer through `check`. `check` returns
  * either the accepted value or a Korean error message to show before re-asking. Cancelling (per
  * `prompter.isCancel`) stops immediately; running out of attempts stops without saving — matches
- * spec §5 "검증 실패는 그 단계만 재질문(최대 3회, 이후 중단·미저장)".
+ * spec §5 "검증 실패는 그 단계만 재질문(최대 3회, 이후 중단·미저장)". A transient `network_error`/
+ * `invalid_response` from the verifier also just re-asks like any other check failure — nothing
+ * special beyond that is needed since `verify.ts` never throws.
  */
 async function withRetry<V>(
   prompter: Prompter,
@@ -58,7 +60,7 @@ export async function runInit(d: InitDeps): Promise<{ saved: boolean; layout: Re
   const { prompter, verifier } = d;
   const layout = repoLayout(d.home, d.repoRoot);
   const existingConfig = (await readUserConfig(layout.configPath)) ?? {};
-  const existingCreds = await readCredentials(layout.credentialsPath);
+  const existingCreds = await readCredentials(layout.credentialsPath, (msg) => prompter.log(msg));
 
   // Step 2 — Slack app existence.
   const hasApp = await prompter.select<"have" | "none">({
@@ -90,7 +92,7 @@ export async function runInit(d: InitDeps): Promise<{ saved: boolean; layout: Re
       const prefixError = checkTokenPrefix("slackBot", token);
       if (prefixError) return { ok: false, message: prefixError };
       const verified = await verifier.slackBot(token);
-      if (!verified.ok) return { ok: false, message: `검증 실패: ${verified.error}` };
+      if (!verified.ok) return { ok: false, message: `검증 실패: ${translateVerifyError(verified.error)}` };
       prompter.log(`확인됨 — ${verified.team} 워크스페이스 · 봇 이름 ${verified.botName}`);
       return { ok: true, value: { token, team: verified.team, botName: verified.botName } };
     },
@@ -112,7 +114,7 @@ export async function runInit(d: InitDeps): Promise<{ saved: boolean; layout: Re
       const prefixError = checkTokenPrefix("slackApp", token);
       if (prefixError) return { ok: false, message: prefixError };
       const verified = await verifier.slackApp(token);
-      if (!verified.ok) return { ok: false, message: `검증 실패: ${verified.error}` };
+      if (!verified.ok) return { ok: false, message: `검증 실패: ${translateVerifyError(verified.error)}` };
       return { ok: true, value: token };
     },
   );
@@ -133,7 +135,7 @@ export async function runInit(d: InitDeps): Promise<{ saved: boolean; layout: Re
       const prefixError = checkTokenPrefix("linear", apiKey);
       if (prefixError) return { ok: false, message: prefixError };
       const verified = await verifier.linear(apiKey);
-      if (!verified.ok) return { ok: false, message: `검증 실패: ${verified.error}` };
+      if (!verified.ok) return { ok: false, message: `검증 실패: ${translateVerifyError(verified.error)}` };
       prompter.log(`확인됨 — ${verified.viewer}`);
       return { ok: true, value: { apiKey, teams: verified.teams } };
     },
@@ -155,14 +157,18 @@ export async function runInit(d: InitDeps): Promise<{ saved: boolean; layout: Re
     () => prompter.text({ message: "Slack 채널 ID 또는 채널 링크", initialValue: existingConfig.slack?.channelId }),
     async (raw) => {
       const trimmed = raw.trim();
-      const channelId = parseChannelInput(trimmed) ?? trimmed;
-      if (!channelId) return { ok: false, message: "채널을 입력해야 한다." };
+      if (!trimmed) return { ok: false, message: "채널을 입력해야 한다." };
+      const parsed = parseChannelInput(trimmed);
+      if (!parsed && isSlackUrlLike(trimmed)) {
+        return { ok: false, message: "링크에서 채널 ID를 찾지 못했다. 채널의 '링크 복사'로 받은 주소를 그대로 붙여넣는다." };
+      }
+      const channelId = parsed ?? trimmed;
       const posted = await verifier.postTest(slackBotToken, channelId);
       if (!posted.ok) {
         if (posted.error === "not_in_channel") {
           return { ok: false, message: `봇이 채널에 없다. Slack에서 "/invite @${botName}" 을 실행한 뒤 다시 시도한다.` };
         }
-        return { ok: false, message: `메시지 전송 실패: ${posted.error}` };
+        return { ok: false, message: `메시지 전송 실패: ${translateVerifyError(posted.error)}` };
       }
       return { ok: true, value: channelId };
     },
@@ -244,7 +250,7 @@ export async function runInitNonInteractive(
 ): Promise<{ saved: boolean; errors: string[] }> {
   const errors: string[] = [];
   const layout = repoLayout(d.home, d.repoRoot);
-  const existingCreds = await readCredentials(layout.credentialsPath);
+  const existingCreds = await readCredentials(layout.credentialsPath, (msg) => console.error(msg));
 
   const slackBotToken = d.env.SLACK_BOT_TOKEN ?? existingCreds.slackBotToken ?? "";
   const slackAppToken = d.env.SLACK_APP_TOKEN ?? existingCreds.slackAppToken ?? "";
@@ -274,16 +280,28 @@ export async function runInitNonInteractive(
   if (errors.length > 0) return { saved: false, errors };
 
   const botVerify = await d.verifier.slackBot(slackBotToken);
-  if (!botVerify.ok) errors.push(`Slack 봇 토큰 검증 실패: ${botVerify.error}`);
+  if (!botVerify.ok) errors.push(`Slack 봇 토큰 검증 실패: ${translateVerifyError(botVerify.error)}`);
   const appVerify = await d.verifier.slackApp(slackAppToken);
-  if (!appVerify.ok) errors.push(`Slack 앱 토큰 검증 실패: ${appVerify.error}`);
+  if (!appVerify.ok) errors.push(`Slack 앱 토큰 검증 실패: ${translateVerifyError(appVerify.error)}`);
+
   const linearVerify = await d.verifier.linear(linearApiKey);
-  if (!linearVerify.ok) errors.push(`Linear API 키 검증 실패: ${linearVerify.error}`);
+  let resolvedTeamId: string | null = null;
+  if (!linearVerify.ok) {
+    errors.push(`Linear API 키 검증 실패: ${translateVerifyError(linearVerify.error)}`);
+  } else {
+    const match = linearVerify.teams.find((t) => t.id === team || t.key === team || t.name === team);
+    if (match) {
+      resolvedTeamId = match.id;
+    } else {
+      const available = linearVerify.teams.map((t) => t.key).join(", ") || "(없음)";
+      errors.push(`Linear 팀 "${team}"을(를) 찾을 수 없다. 사용 가능한 팀: ${available}`);
+    }
+  }
 
   if (errors.length > 0) return { saved: false, errors };
 
   const postResult = await d.verifier.postTest(slackBotToken, channel as string);
-  if (!postResult.ok) errors.push(`채널 테스트 메시지 전송 실패: ${postResult.error}`);
+  if (!postResult.ok) errors.push(`채널 테스트 메시지 전송 실패: ${translateVerifyError(postResult.error)}`);
 
   if (errors.length > 0) return { saved: false, errors };
 
@@ -292,7 +310,7 @@ export async function runInitNonInteractive(
   await writeUserConfig(layout.configPath, {
     ticketSource: "linear",
     repoPath: d.repoRoot,
-    linearTeamId: team as string,
+    linearTeamId: resolvedTeamId as string,
     linearTrigger: "poll",
     slack: { channelId: channel as string, startMode: "button", roleGroups: {} },
   });

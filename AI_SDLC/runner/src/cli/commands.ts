@@ -152,7 +152,7 @@ async function buildDoctorDeps(args: ParsedArgs): Promise<{ deps: DoctorDeps; re
   }
   const layout = repoLayout(home, repoRoot);
   const config = await readUserConfig(layout.configPath);
-  const credentials = await readCredentials(layout.credentialsPath);
+  const credentials = await readCredentials(layout.credentialsPath, (msg) => console.error(msg));
   return { deps: { exec: execFile, verifier, repoRoot, config, credentials }, repoRoot };
 }
 
@@ -175,7 +175,7 @@ async function runStart(args: ParsedArgs): Promise<number> {
     console.error("설정을 찾을 수 없다. 먼저 `npx ai-sdlc-runner init` 을 실행한다.");
     return 1;
   }
-  const credentials = await readCredentials(layout.credentialsPath);
+  const credentials = await readCredentials(layout.credentialsPath, (msg) => console.error(msg));
 
   if (!args.skipChecks) {
     const verifier = createVerifier();
@@ -205,7 +205,7 @@ async function runConfigCommand(args: ParsedArgs): Promise<number> {
     return 0;
   }
   console.log(JSON.stringify(fileConfig, null, 2));
-  const credentials = await readCredentials(layout.credentialsPath);
+  const credentials = await readCredentials(layout.credentialsPath, (msg) => console.error(msg));
   console.log("토큰:");
   console.log(`  slackBotToken: ${maskToken(credentials.slackBotToken)}`);
   console.log(`  slackAppToken: ${maskToken(credentials.slackAppToken)}`);

@@ -4,7 +4,7 @@ import type { FileConfig } from "../config.ts";
 // Task 1 (concurrent) — `Credentials` is type-only here so this file has zero RUNTIME dependency
 // on user-config.ts; `import type` is fully erased by --experimental-strip-types.
 import type { Credentials } from "../user-config.ts";
-import type { Verifier } from "./verify.ts";
+import { translateVerifyError, type Verifier } from "./verify.ts";
 
 /**
  * `doctor`'s checks intentionally do NOT re-test the Slack channel (no `postTest`/spam) — the
@@ -41,6 +41,36 @@ async function tryExec(
 
 const REINIT_FIX = "npx ai-sdlc-runner init 으로 다시 설정한다";
 
+/**
+ * Finds the `claude mcp list` line for the "linear" server — matched on the server name (the
+ * token before the first `:`), not a substring of the whole line, so a description mentioning
+ * "linear" elsewhere never false-positives.
+ */
+function findLinearMcpLine(stdout: string): string | null {
+  for (const rawLine of stdout.split("\n")) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const name = line.split(":")[0]?.trim() ?? "";
+    if (name.toLowerCase().includes("linear")) return line;
+  }
+  return null;
+}
+
+type McpStatus = "connected" | "failed" | "needs_auth" | "unknown";
+
+/**
+ * Classifies one `claude mcp list` status line. Real formats seen from `claude mcp list`:
+ *   `linear: https://mcp.linear.app/mcp (HTTP) - ✔ Connected`
+ *   `linear: https://mcp.linear.app/mcp (HTTP) - ✗ Failed to connect`
+ *   `linear: https://mcp.linear.app/mcp (HTTP) - ⚠ Needs authentication`
+ */
+function classifyMcpLine(line: string): McpStatus {
+  if (/needs authentication/i.test(line)) return "needs_auth";
+  if (/✗|failed/i.test(line)) return "failed";
+  if (/✔|connected/i.test(line)) return "connected";
+  return "unknown";
+}
+
 export async function runDoctor(d: DoctorDeps): Promise<Check[]> {
   const checks: Check[] = [];
 
@@ -72,13 +102,21 @@ export async function runDoctor(d: DoctorDeps): Promise<Check[]> {
   });
 
   const mcpResult = await tryExec(d.exec, "claude", ["mcp", "list"]);
-  const hasLinear = mcpResult.code === 0 && /linear/i.test(mcpResult.stdout);
+  const linearLine = mcpResult.code === 0 ? findLinearMcpLine(mcpResult.stdout) : null;
+  const mcpStatus: McpStatus = linearLine ? classifyMcpLine(linearLine) : "unknown";
+  const linearConnected = mcpStatus === "connected";
+  const mcpFix =
+    mcpStatus === "needs_auth"
+      ? "claude mcp 또는 /mcp 로 Linear 인증을 완료한다"
+      : linearLine
+        ? "claude mcp 또는 /mcp 로 Linear를 다시 연결한다"
+        : "claude mcp add 로 Linear MCP를 연결한다";
   checks.push({
     name: "Linear MCP 연결",
-    ok: hasLinear,
-    detail: hasLinear ? "연결됨" : "claude mcp list에 linear가 없다 — 00 Setup이 실패한다",
-    fix: hasLinear ? undefined : "claude mcp add 로 Linear MCP를 연결한다",
-    blocking: !hasLinear,
+    ok: linearConnected,
+    detail: linearLine ?? "claude mcp list에 linear가 없다 — 00 Setup이 실패한다",
+    fix: linearConnected ? undefined : mcpFix,
+    blocking: !linearConnected,
   });
 
   const slackConfigured = Boolean(d.config?.slack?.channelId);
@@ -88,7 +126,7 @@ export async function runDoctor(d: DoctorDeps): Promise<Check[]> {
     checks.push({
       name: "Slack 봇 토큰",
       ok: result.ok,
-      detail: result.ok ? `${result.team} · ${result.botName}` : result.error,
+      detail: result.ok ? `${result.team} · ${result.botName}` : translateVerifyError(result.error),
       fix: result.ok ? undefined : REINIT_FIX,
       blocking: !result.ok && slackConfigured,
     });
@@ -107,7 +145,7 @@ export async function runDoctor(d: DoctorDeps): Promise<Check[]> {
     checks.push({
       name: "Slack 앱 토큰",
       ok: result.ok,
-      detail: result.ok ? "연결 가능" : result.error,
+      detail: result.ok ? "연결 가능" : translateVerifyError(result.error),
       fix: result.ok ? undefined : REINIT_FIX,
       blocking: !result.ok && slackConfigured,
     });
@@ -126,7 +164,7 @@ export async function runDoctor(d: DoctorDeps): Promise<Check[]> {
     checks.push({
       name: "Linear API 키",
       ok: result.ok,
-      detail: result.ok ? result.viewer : result.error,
+      detail: result.ok ? result.viewer : translateVerifyError(result.error),
       fix: result.ok ? undefined : REINIT_FIX,
       blocking: !result.ok,
     });

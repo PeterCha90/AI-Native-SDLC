@@ -36,11 +36,28 @@ export function checkTokenPrefix(kind: TokenKind, token: string): string | null 
   return `${LABELS[kind]}는 "${PREFIXES[kind]}"로 시작해야 한다.`;
 }
 
-/** Accepts a raw channel id ("C0ABC123") or a channel link ("…/archives/C0ABC123/p…"). */
+/** True when the input is (or looks like) a URL rather than a bare id — used to give a clearer error when link-parsing fails. */
+export function isSlackUrlLike(input: string): boolean {
+  const trimmed = input.trim();
+  return /^https?:\/\//i.test(trimmed) || /slack\.com/i.test(trimmed);
+}
+
+/**
+ * Accepts a raw channel id ("C0ABC123"), a channel link ("…/archives/C0ABC123/p…", with or
+ * without a trailing `?thread_ts=…` query string), or a client deep link
+ * ("https://app.slack.com/client/T0TEAM/C0ABC123…"). Returns `null` when no id can be found —
+ * callers should check `isSlackUrlLike` to tell "not a channel id" apart from "a link we
+ * couldn't parse".
+ */
 export function parseChannelInput(input: string): string | null {
   const trimmed = input.trim();
-  const linkMatch = trimmed.match(/\/archives\/([A-Za-z0-9]+)/);
-  if (linkMatch) return linkMatch[1];
+
+  const archiveMatch = trimmed.match(/\/archives\/([A-Za-z0-9]+)/);
+  if (archiveMatch) return archiveMatch[1];
+
+  const clientMatch = trimmed.match(/\/client\/T[A-Za-z0-9]+\/([A-Za-z0-9]+)/);
+  if (clientMatch) return clientMatch[1];
+
   if (/^[A-Za-z][A-Za-z0-9]{6,}$/.test(trimmed)) return trimmed;
   return null;
 }
@@ -58,9 +75,42 @@ export interface Verifier {
 /** Slack Web API "AI-SDLC connected" test message, sent to the chosen channel during `init`. */
 export const SLACK_TEST_MESSAGE = "✅ AI-SDLC 연결 확인 — 이 채널에서 티켓 알림과 승인을 받는다.";
 
-export function createVerifier(fetchImpl: typeof fetch = fetch): Verifier {
-  async function slackApi(method: string, token: string, body?: Record<string, unknown>): Promise<Record<string, unknown>> {
-    const res = await fetchImpl(`https://slack.com/api/${method}`, {
+/** `fetch` itself rejected (offline, DNS, TLS, …) — never thrown further up. */
+export const ERROR_NETWORK = "network_error";
+/** The HTTP call succeeded but the body wasn't the JSON we expected. */
+export const ERROR_INVALID_RESPONSE = "invalid_response";
+
+const ERROR_MESSAGES: Record<string, string> = {
+  [ERROR_NETWORK]: "네트워크에 연결하지 못했다 — 인터넷 연결을 확인하고 다시 시도한다.",
+  [ERROR_INVALID_RESPONSE]: "서버 응답을 해석하지 못했다 — 잠시 후 다시 시도한다.",
+};
+
+/** Maps a verifier error code to a Korean, actionable message; unknown codes pass through as-is. */
+export function translateVerifyError(error: string): string {
+  return ERROR_MESSAGES[error] ?? error;
+}
+
+type RawResult = { ok: true; data: Record<string, unknown> } | { ok: false; error: string };
+
+export function createVerifier(fetchImpl: typeof fetch = fetch, log: (message: string) => void = () => {}): Verifier {
+  /** Never throws — a rejected fetch or a non-JSON body both become a `{ ok: false }` result. */
+  async function rawFetch(url: string, init: RequestInit): Promise<RawResult> {
+    let res: Response;
+    try {
+      res = await fetchImpl(url, init);
+    } catch {
+      return { ok: false, error: ERROR_NETWORK };
+    }
+    try {
+      const data = (await res.json()) as Record<string, unknown>;
+      return { ok: true, data };
+    } catch {
+      return { ok: false, error: ERROR_INVALID_RESPONSE };
+    }
+  }
+
+  async function slackApi(method: string, token: string, body?: Record<string, unknown>): Promise<RawResult> {
+    return rawFetch(`https://slack.com/api/${method}`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
@@ -68,12 +118,13 @@ export function createVerifier(fetchImpl: typeof fetch = fetch): Verifier {
       },
       body: JSON.stringify(body ?? {}),
     });
-    return (await res.json()) as Record<string, unknown>;
   }
 
   return {
     async slackBot(token) {
-      const data = await slackApi("auth.test", token);
+      const result = await slackApi("auth.test", token);
+      if (!result.ok) return { ok: false, error: result.error };
+      const data = result.data;
       if (!data.ok) return { ok: false, error: String(data.error ?? "unknown_error") };
       return {
         ok: true,
@@ -84,20 +135,32 @@ export function createVerifier(fetchImpl: typeof fetch = fetch): Verifier {
     },
 
     async slackApp(token) {
-      const data = await slackApi("apps.connections.open", token);
+      const result = await slackApi("apps.connections.open", token);
+      if (!result.ok) return { ok: false, error: result.error };
+      const data = result.data;
       if (!data.ok) return { ok: false, error: String(data.error ?? "unknown_error") };
       return { ok: true };
     },
 
     async postTest(botToken, channel) {
-      const data = await slackApi("chat.postMessage", botToken, { channel, text: SLACK_TEST_MESSAGE });
+      const result = await slackApi("chat.postMessage", botToken, { channel, text: SLACK_TEST_MESSAGE });
+      if (!result.ok) return { ok: false, error: result.error };
+      const data = result.data;
       if (!data.ok) return { ok: false, error: String(data.error ?? "unknown_error") };
       return { ok: true };
     },
 
     async userGroups(botToken) {
-      const data = await slackApi("usergroups.list", botToken);
-      if (!data.ok || !Array.isArray(data.usergroups)) return [];
+      const result = await slackApi("usergroups.list", botToken);
+      if (!result.ok) {
+        log(`Slack 사용자 그룹 조회 실패: ${translateVerifyError(result.error)}`);
+        return [];
+      }
+      const data = result.data;
+      if (!data.ok || !Array.isArray(data.usergroups)) {
+        if (!data.ok) log(`Slack 사용자 그룹 조회 실패: ${String(data.error ?? "unknown_error")}`);
+        return [];
+      }
       return (data.usergroups as Array<Record<string, unknown>>).map((g) => ({
         id: String(g.id),
         handle: String(g.handle),
@@ -106,7 +169,7 @@ export function createVerifier(fetchImpl: typeof fetch = fetch): Verifier {
     },
 
     async linear(apiKey) {
-      const res = await fetchImpl("https://api.linear.app/graphql", {
+      const result = await rawFetch("https://api.linear.app/graphql", {
         method: "POST",
         headers: {
           Authorization: apiKey,
@@ -114,7 +177,8 @@ export function createVerifier(fetchImpl: typeof fetch = fetch): Verifier {
         },
         body: JSON.stringify({ query: "{ viewer { name } teams { nodes { id key name } } }" }),
       });
-      const data = (await res.json()) as {
+      if (!result.ok) return { ok: false, error: result.error };
+      const data = result.data as {
         data?: { viewer?: { name?: string }; teams?: { nodes?: Array<{ id: string; key: string; name: string }> } };
         errors?: Array<{ message?: string }>;
       };
@@ -122,7 +186,7 @@ export function createVerifier(fetchImpl: typeof fetch = fetch): Verifier {
         return { ok: false, error: String(data.errors[0]?.message ?? "unknown_error") };
       }
       const viewer = data.data?.viewer?.name;
-      if (!viewer) return { ok: false, error: "invalid_response" };
+      if (!viewer) return { ok: false, error: ERROR_INVALID_RESPONSE };
       const teams = (data.data?.teams?.nodes ?? []).map((t) => ({ id: String(t.id), key: String(t.key), name: String(t.name) }));
       return { ok: true, viewer, teams };
     },

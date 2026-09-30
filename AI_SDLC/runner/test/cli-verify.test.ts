@@ -1,6 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkTokenPrefix, parseChannelInput, createVerifier } from "../src/cli/verify.ts";
+import {
+  checkTokenPrefix,
+  parseChannelInput,
+  createVerifier,
+  isSlackUrlLike,
+  translateVerifyError,
+  ERROR_NETWORK,
+  ERROR_INVALID_RESPONSE,
+} from "../src/cli/verify.ts";
 
 test("checkTokenPrefix accepts correct prefixes", () => {
   assert.equal(checkTokenPrefix("slackBot", "xoxb-123"), null);
@@ -33,6 +41,43 @@ test("parseChannelInput extracts the id from an archive link", () => {
 
 test("parseChannelInput rejects garbage input", () => {
   assert.equal(parseChannelInput("hello world"), null);
+});
+
+test("parseChannelInput extracts the id from an archive link with a thread_ts query string", () => {
+  assert.equal(
+    parseChannelInput("https://acme.slack.com/archives/C0ABC123/p1699999999000?thread_ts=1699999999.000200&cid=C0ABC123"),
+    "C0ABC123",
+  );
+});
+
+test("parseChannelInput extracts the id from an archive link with no trailing message id", () => {
+  assert.equal(parseChannelInput("https://acme.slack.com/archives/C0ABC123?thread_ts=1699999999.000200"), "C0ABC123");
+});
+
+test("parseChannelInput extracts the id from a client deep link", () => {
+  assert.equal(parseChannelInput("https://app.slack.com/client/T02ABCDEF/C0ABC123"), "C0ABC123");
+});
+
+test("parseChannelInput extracts the id from a client deep link with a trailing path", () => {
+  assert.equal(parseChannelInput("https://app.slack.com/client/T02ABCDEF/C0ABC123/thread/C0ABC123-1699999999.000200"), "C0ABC123");
+});
+
+test("parseChannelInput returns null for a URL it cannot parse", () => {
+  assert.equal(parseChannelInput("https://acme.slack.com/messages/general"), null);
+});
+
+test("isSlackUrlLike recognizes URLs and slack.com hosts, not bare ids or garbage", () => {
+  assert.equal(isSlackUrlLike("https://acme.slack.com/archives/C0ABC123"), true);
+  assert.equal(isSlackUrlLike("http://app.slack.com/client/T1/C1"), true);
+  assert.equal(isSlackUrlLike("slack.com/archives/whatever"), true);
+  assert.equal(isSlackUrlLike("C0ABC123"), false);
+  assert.equal(isSlackUrlLike("hello world"), false);
+});
+
+test("translateVerifyError maps known codes to Korean messages and passes through unknown ones", () => {
+  assert.match(translateVerifyError(ERROR_NETWORK), /네트워크/);
+  assert.match(translateVerifyError(ERROR_INVALID_RESPONSE), /응답/);
+  assert.equal(translateVerifyError("invalid_auth"), "invalid_auth");
 });
 
 test("verifier.slackBot maps a successful auth.test", async () => {
@@ -122,4 +167,50 @@ test("verifier.linear surfaces graphql errors", async () => {
   const verifier = createVerifier(fakeFetch);
   const result = await verifier.linear("bad-key");
   assert.deepEqual(result, { ok: false, error: "Authentication required" });
+});
+
+test("a rejecting fetch never throws — every verifier method returns network_error", async () => {
+  const rejectingFetch = (async () => {
+    throw new Error("getaddrinfo ENOTFOUND slack.com");
+  }) as unknown as typeof fetch;
+  const verifier = createVerifier(rejectingFetch);
+
+  assert.deepEqual(await verifier.slackBot("xoxb-a"), { ok: false, error: ERROR_NETWORK });
+  assert.deepEqual(await verifier.slackApp("xapp-a"), { ok: false, error: ERROR_NETWORK });
+  assert.deepEqual(await verifier.postTest("xoxb-a", "C1"), { ok: false, error: ERROR_NETWORK });
+  assert.deepEqual(await verifier.linear("lin_api_a"), { ok: false, error: ERROR_NETWORK });
+  assert.deepEqual(await verifier.userGroups("xoxb-a"), []);
+});
+
+test("userGroups logs the network error instead of swallowing it silently", async () => {
+  const rejectingFetch = (async () => {
+    throw new Error("network down");
+  }) as unknown as typeof fetch;
+  const logs: string[] = [];
+  const verifier = createVerifier(rejectingFetch, (msg) => logs.push(msg));
+  const result = await verifier.userGroups("xoxb-a");
+  assert.deepEqual(result, []);
+  assert.ok(logs.some((l) => l.includes("네트워크")));
+});
+
+test("a non-JSON response body never throws — every verifier method returns invalid_response", async () => {
+  const brokenJsonFetch = (async () => ({
+    json: async () => {
+      throw new SyntaxError("Unexpected token < in JSON");
+    },
+  })) as unknown as typeof fetch;
+  const verifier = createVerifier(brokenJsonFetch);
+
+  assert.deepEqual(await verifier.slackBot("xoxb-a"), { ok: false, error: ERROR_INVALID_RESPONSE });
+  assert.deepEqual(await verifier.slackApp("xapp-a"), { ok: false, error: ERROR_INVALID_RESPONSE });
+  assert.deepEqual(await verifier.postTest("xoxb-a", "C1"), { ok: false, error: ERROR_INVALID_RESPONSE });
+  assert.deepEqual(await verifier.linear("lin_api_a"), { ok: false, error: ERROR_INVALID_RESPONSE });
+  assert.deepEqual(await verifier.userGroups("xoxb-a"), []);
+});
+
+test("verifier.linear treats a well-formed but empty JSON body as invalid_response, not a throw", async () => {
+  const fakeFetch = (async () => ({ json: async () => ({}) })) as unknown as typeof fetch;
+  const verifier = createVerifier(fakeFetch);
+  const result = await verifier.linear("lin_api_a");
+  assert.deepEqual(result, { ok: false, error: ERROR_INVALID_RESPONSE });
 });

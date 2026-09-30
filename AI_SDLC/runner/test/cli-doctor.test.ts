@@ -26,7 +26,12 @@ function greenExec(overrides: Record<string, { code: number; stdout: string; std
     }
     if (cmd === "claude" && args[0] === "--version") return { code: 0, stdout: "1.0.0", stderr: "" };
     if (cmd === "claude" && args[0] === "auth") return { code: 0, stdout: "logged in", stderr: "" };
-    if (cmd === "claude" && args[0] === "mcp") return { code: 0, stdout: "linear\ngithub", stderr: "" };
+    if (cmd === "claude" && args[0] === "mcp")
+      return {
+        code: 0,
+        stdout: "linear: https://mcp.linear.app/mcp (HTTP) - ✔ Connected\ngithub: https://api.githubcopilot.com/mcp (HTTP) - ✔ Connected",
+        stderr: "",
+      };
     if (cmd === "git") return { code: 0, stdout: "true", stderr: "" };
     if (cmd === "ego-lite") return { code: 0, stdout: "1.0.0", stderr: "" };
     return { code: 1, stdout: "", stderr: "unhandled" };
@@ -51,8 +56,60 @@ test("claude not logged in is a blocking failure", async () => {
   assert.equal(check!.blocking, true);
 });
 
-test("missing linear in mcp list is a blocking failure", async () => {
-  const exec = greenExec({ "claude mcp": { code: 0, stdout: "github\nfilesystem", stderr: "" } });
+test("missing linear entirely in mcp list is a blocking failure", async () => {
+  const exec = greenExec({
+    "claude mcp": { code: 0, stdout: "github: https://api.githubcopilot.com/mcp (HTTP) - ✔ Connected", stderr: "" },
+  });
+  const checks = await runDoctor({ exec, verifier: fakeVerifier(), repoRoot: null, config: null, credentials: creds() });
+  const check = checks.find((c) => c.name === "Linear MCP 연결");
+  assert.ok(check);
+  assert.equal(check!.ok, false);
+  assert.equal(check!.blocking, true);
+});
+
+test("linear connected (✔ Connected) is not blocking", async () => {
+  const exec = greenExec({
+    "claude mcp": { code: 0, stdout: "linear: https://mcp.linear.app/mcp (HTTP) - ✔ Connected", stderr: "" },
+  });
+  const checks = await runDoctor({ exec, verifier: fakeVerifier(), repoRoot: null, config: null, credentials: creds() });
+  const check = checks.find((c) => c.name === "Linear MCP 연결");
+  assert.ok(check);
+  assert.equal(check!.ok, true);
+  assert.equal(check!.blocking, false);
+});
+
+test("linear failed to connect (✗ Failed to connect) is blocking", async () => {
+  const exec = greenExec({
+    "claude mcp": { code: 0, stdout: "linear: https://mcp.linear.app/mcp (HTTP) - ✗ Failed to connect", stderr: "" },
+  });
+  const checks = await runDoctor({ exec, verifier: fakeVerifier(), repoRoot: null, config: null, credentials: creds() });
+  const check = checks.find((c) => c.name === "Linear MCP 연결");
+  assert.ok(check);
+  assert.equal(check!.ok, false);
+  assert.equal(check!.blocking, true);
+});
+
+test("linear needs authentication (⚠ Needs authentication) is blocking with an auth fix hint", async () => {
+  const exec = greenExec({
+    "claude mcp": { code: 0, stdout: "linear: https://mcp.linear.app/mcp (HTTP) - ⚠ Needs authentication", stderr: "" },
+  });
+  const checks = await runDoctor({ exec, verifier: fakeVerifier(), repoRoot: null, config: null, credentials: creds() });
+  const check = checks.find((c) => c.name === "Linear MCP 연결");
+  assert.ok(check);
+  assert.equal(check!.ok, false);
+  assert.equal(check!.blocking, true);
+  assert.match(check!.fix ?? "", /mcp/i);
+});
+
+test("a linear line for another server (e.g. 'my-linear-clone') doesn't false-positive as unrelated", async () => {
+  // Sanity: the matcher keys off the server NAME (before ':'), not any substring of the line.
+  const exec = greenExec({
+    "claude mcp": {
+      code: 0,
+      stdout: "docs: https://example.com/mcp (HTTP) - ✔ Connected — linear issues supported",
+      stderr: "",
+    },
+  });
   const checks = await runDoctor({ exec, verifier: fakeVerifier(), repoRoot: null, config: null, credentials: creds() });
   const check = checks.find((c) => c.name === "Linear MCP 연결");
   assert.ok(check);
