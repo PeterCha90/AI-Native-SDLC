@@ -4,7 +4,7 @@ import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import type { Config } from "./config.ts";
-import type { Ticket, TicketSource } from "./adapters/types.ts";
+import type { StateType, Ticket, TicketSource } from "./adapters/types.ts";
 import { runStage, type StageResult } from "./claude.ts";
 import { runE2E } from "./e2e.ts";
 import { awaitApproval, gateMapPath, readGateMap, type GateMap, type StageId } from "./gate.ts";
@@ -13,6 +13,8 @@ import { noopEvents, safeEvents, type PipelineEvents } from "./events.ts";
 import { noInterview, parseOpenQuestions, type InterviewChannel } from "./interview.ts";
 
 const DEPTH_MARKER = /sdlc-depth:\s*(\d+)/i;
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /** Absolute path to the plugin that carries the skills, hooks and subagents each stage relies on. */
 const PLUGIN_DIR = resolve(fileURLToPath(new URL("../..", import.meta.url)), "plugin");
@@ -343,6 +345,35 @@ export async function runPipeline(
   const DOC_WRITE_TOOLS = ["Read", "Write", "Glob", "Grep", "Skill"];
   const REWORKABLE_STAGES: readonly StageId[] = ["01-plan", "02-design", "03-build"];
 
+  /** The session id to resume from, plus the most recent `StageResult` that touched the artifact — used to build `artifactWarning` for the *next* gate summary, not just the very first run's. */
+  interface StageThread {
+    sessionId: string;
+    latest: StageResult;
+  }
+
+  /**
+   * After moving a rejected gate's card back to "unstarted", confirms it no longer reads as
+   * "canceled" before handing control back to `gate()`'s own poll — a source with eventual
+   * consistency (or a fake source's clamped-last-value polling) could otherwise hand the very
+   * first re-poll a stale "canceled" and read it as a second human rejection nobody made. Best
+   * effort: retries a few times with a short delay, then gives up and lets the pipeline continue
+   * regardless — `gate()`'s own polling loop is still running after this and will eventually see
+   * the truth either way.
+   */
+  async function confirmNotCanceled(stage: StageId, issueId: string): Promise<void> {
+    for (let i = 0; i < 3; i++) {
+      let state: StateType;
+      try {
+        state = await source.getStateType(issueId);
+      } catch {
+        return;
+      }
+      if (state !== "canceled") return;
+      await sleep(config.gatePollIntervalMs);
+    }
+    console.log(`[gate:${stage}] unstarted로 되돌린 뒤에도 여전히 canceled로 읽힌다 (3회 재확인 실패) — 그래도 게이트를 다시 연다.`);
+  }
+
   /**
    * Runs `stageLabel` with `resumeSessionId`, and if that resume attempt fails in a way that
    * leaves no session transcript behind (`ok:false` and `sessionJsonlPath:null` — i.e. the
@@ -371,9 +402,10 @@ export async function runPipeline(
    * (revised if any round ran, otherwise unchanged) — used both after the initial 01-intent run
    * and again after a 01-plan rework.
    */
-  async function runInterviewLoop(sessionId: string): Promise<string> {
+  async function runInterviewLoop(thread: StageThread): Promise<StageThread> {
     const maxRounds = config.interviewMaxRounds;
-    let current = sessionId;
+    let current = thread.sessionId;
+    let latest = thread.latest;
     for (let round = 1; round <= maxRounds; round++) {
       const content = existsSync(docsIntent) ? await readFile(docsIntent, "utf8") : "";
       const questions = parseOpenQuestions(content);
@@ -392,8 +424,9 @@ export async function runPipeline(
       const fallbackPrompt = `기존 산출물 전문:\n\n${content}\n\n${revisePrompt}`;
       const reviseResult = await runStageOrFallback("01-intent-revise", revisePrompt, fallbackPrompt, current);
       current = reviseResult.sessionId;
+      latest = reviseResult;
     }
-    return current;
+    return { sessionId: current, latest };
   }
 
   /**
@@ -406,14 +439,16 @@ export async function runPipeline(
   async function gateWithRework(
     stage: StageId,
     artifactPath: string,
-    buildSummary: () => string,
-    sessionId: string,
+    buildSummary: (latest: StageResult) => string,
+    thread: StageThread,
+    reworkStageLabel: string = `${stage}-rework`,
   ): Promise<{ approved: boolean; sessionId: string }> {
     const maxAttempts = config.reworkMaxAttempts;
     let attempt = 0;
-    let current = sessionId;
+    let current = thread.sessionId;
+    let latest = thread.latest;
     for (;;) {
-      const { approved, reason } = await gate(stage, buildSummary());
+      const { approved, reason } = await gate(stage, buildSummary(latest));
       if (approved) return { approved: true, sessionId: current };
       if (!REWORKABLE_STAGES.includes(stage) || attempt >= maxAttempts) {
         return { approved: false, sessionId: current };
@@ -426,8 +461,11 @@ export async function runPipeline(
       const artifactContent = existsSync(artifactPath) ? await readFile(artifactPath, "utf8") : "";
       const reworkPrompt = `반려 사유: ${effectiveReason}. 반영해 ${artifactPath} 를 고쳐라.`;
       const fallbackPrompt = `기존 산출물 전문:\n\n${artifactContent}\n\n${reworkPrompt}`;
-      const reworkResult = await runStageOrFallback(`${stage}-rework`, reworkPrompt, fallbackPrompt, current);
+      const reworkResult = await runStageOrFallback(reworkStageLabel, reworkPrompt, fallbackPrompt, current);
       current = reworkResult.sessionId;
+      // The next gate summary must reflect how the rework actually went — a rework (and its
+      // fallback) can fail just like any other stage, and the human re-approving must see that.
+      latest = reworkResult;
 
       if (gates) {
         await source.setStateType(gates[stage].issueId, "unstarted").catch((err: Error) => {
@@ -436,10 +474,15 @@ export async function runPipeline(
         await source.comment(gates[stage].issueId, `재작업 ${attempt}/${maxAttempts}`).catch((err: Error) => {
           console.error(`[gate:${stage}] "재작업 ${attempt}/${maxAttempts}" 코멘트를 남기지 못했다 (계속한다): ${err.message}`);
         });
+        // The card was just moved back to "unstarted" — make sure the next poll doesn't read a
+        // stale "canceled" as a second rejection nobody made.
+        await confirmNotCanceled(stage, gates[stage].issueId);
       }
 
       if (stage === "01-plan") {
-        current = await runInterviewLoop(current);
+        const afterInterview = await runInterviewLoop({ sessionId: current, latest });
+        current = afterInterview.sessionId;
+        latest = afterInterview.latest;
       }
     }
   }
@@ -455,12 +498,12 @@ export async function runPipeline(
     ev,
     DOC_WRITE_TOOLS,
   );
-  const intentSessionId = await runInterviewLoop(intentResult.sessionId);
+  const afterInitialInterview = await runInterviewLoop({ sessionId: intentResult.sessionId, latest: intentResult });
   const plan01 = await gateWithRework(
     "01-plan",
     docsIntent,
-    () => `${artifactWarning(intentResult, docsIntent)}01 Plan 산출물: \`${docsIntent}\`\n\n문제/원하는 결과/영향 범위/제약/미해결 질문이 티켓 의도와 맞는지 확인해 달라.`,
-    intentSessionId,
+    (latest) => `${artifactWarning(latest, docsIntent)}01 Plan 산출물: \`${docsIntent}\`\n\n문제/원하는 결과/영향 범위/제약/미해결 질문이 티켓 의도와 맞는지 확인해 달라.`,
+    afterInitialInterview,
   );
   if (!plan01.approved) {
     await writeLive(runnerDir, key, { stage: "01-plan", phase: "aborted", since: new Date().toISOString() });
@@ -481,8 +524,8 @@ export async function runPipeline(
   const design02 = await gateWithRework(
     "02-design",
     docsSpec,
-    () => `${artifactWarning(specResult, docsSpec)}02 Design 산출물: \`${docsSpec}\`\n\n"정책 충돌" 섹션을 각 정책 담당자와 정리한 뒤 진행 여부를 결정해 달라.`,
-    specResult.sessionId,
+    (latest) => `${artifactWarning(latest, docsSpec)}02 Design 산출물: \`${docsSpec}\`\n\n"정책 충돌" 섹션을 각 정책 담당자와 정리한 뒤 진행 여부를 결정해 달라.`,
+    { sessionId: specResult.sessionId, latest: specResult },
   );
   if (!design02.approved) {
     await writeLive(runnerDir, key, { stage: "02-design", phase: "aborted", since: new Date().toISOString() });
@@ -503,8 +546,12 @@ export async function runPipeline(
   const build03 = await gateWithRework(
     "03-build",
     docsPlan,
-    () => `${artifactWarning(planResult, docsPlan)}03 Build 착수 계획: \`${docsPlan}\`\n\n변경할 파일 목록과 "무엇이 깨질 수 있는가"를 심문하고, 이대로 구현해도 되는지 판단해 달라.\n승인 후에만 에이전트가 코드를 편집한다.`,
-    planResult.sessionId,
+    (latest) => `${artifactWarning(latest, docsPlan)}03 Build 착수 계획: \`${docsPlan}\`\n\n변경할 파일 목록과 "무엇이 깨질 수 있는가"를 심문하고, 이대로 구현해도 되는지 판단해 달라.\n승인 후에만 에이전트가 코드를 편집한다.`,
+    { sessionId: planResult.sessionId, latest: planResult },
+    // This gate approves the *plan* (docsPlan, written by the 03-plan stage) before any code is
+    // touched — the rework session edits that same plan document, so it's "03-plan-rework", not
+    // "03-build-rework" (03-build itself only runs after this gate is approved).
+    "03-plan-rework",
   );
   if (!build03.approved) {
     await writeLive(runnerDir, key, { stage: "03-build", phase: "aborted", since: new Date().toISOString() });

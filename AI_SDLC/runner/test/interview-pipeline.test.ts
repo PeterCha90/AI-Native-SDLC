@@ -385,6 +385,20 @@ test("rework: a single 01-plan rejection reopens the gate as 'unstarted' with a 
   assert.ok(reworkComment, "a '재작업 1/3' comment must be posted on the gate issue");
 });
 
+test("rework: a rejected 03-build gate reworks under the label '03-plan-rework' (it edits the plan doc, not the build)", async () => {
+  const repo = await makeRepo();
+  const runnerDir = await mkdtemp(join(tmpdir(), "sdlc-interview-runner-"));
+  const rec = recordingSource({ "uuid-03-build": ["canceled", "completed"] });
+  const proceedChannel = proceedImmediatelyChannel();
+
+  await withStubs([NO_QUESTIONS], () => runPipeline(TICKET, makeConfig(repo), rec.source, runnerDir, undefined, proceedChannel.channel));
+
+  const log = await stageLog(runnerDir, "ENG-1");
+  assert.ok(log.find((e) => e.stage === "03-plan-rework"), "the 03 rework stage must be labeled '03-plan-rework'");
+  assert.ok(!log.find((e) => e.stage === "03-build-rework"), "the old '03-build-rework' label must not be used");
+  assert.ok(log.find((e) => e.stage === "03-build"), "03-build (the implementation stage) must still run once the plan gate is approved");
+});
+
 test("rework: 01-plan rejected through all reworkMaxAttempts aborts the pipeline", async () => {
   const repo = await makeRepo();
   const runnerDir = await mkdtemp(join(tmpdir(), "sdlc-interview-runner-"));
@@ -421,6 +435,60 @@ test("rework: a rejected 04-test gate does not trigger any rework stage and stil
 
   const live = JSON.parse(await readFile(join(runnerDir, ".state", `${TICKET.key}.live.json`), "utf8")) as { phase: string };
   assert.equal(live.phase, "done", "the pipeline still finishes normally after a 04-test rejection (no abort, no rework)");
+});
+
+// ── rework: gate summary must reflect the rework's own outcome (fix round 1, finding 1) ────────
+
+test("rework: when a rework AND its fallback both fail, the re-opened 01-plan gate summary carries the artifact warning", async () => {
+  const repo = await makeRepo();
+  const runnerDir = await mkdtemp(join(tmpdir(), "sdlc-interview-runner-"));
+  const rec = recordingSource({ "uuid-01-plan": ["canceled", "completed"] });
+  const proceedChannel = proceedImmediatelyChannel();
+
+  await withStubs([NO_QUESTIONS], async () => {
+    // Matches both the rework prompt ("반려 사유: ...") and the fallback prompt (which embeds the
+    // same rework prompt after "기존 산출물 전문:") — so the rework attempt AND its one fallback
+    // retry both fail, and gateWithRework's `latest` StageResult for the re-opened gate is that
+    // failed result, not the (successful) initial 01-intent run.
+    process.env.STUB_CLAUDE_FAIL_ON = "반려 사유:";
+    await runPipeline(TICKET, makeConfig(repo), rec.source, runnerDir, undefined, proceedChannel.channel);
+  });
+
+  const log = await stageLog(runnerDir, "ENG-1");
+  assert.ok(log.find((e) => e.stage === "01-plan-rework" && e.ok === false), "the rework (and its fallback) must both have failed");
+
+  // `gate()` posts its `summary` as a comment on the gate issue before waiting — this is the same
+  // text a human reading the re-opened gate would see.
+  const gateSummaries = rec.comments.filter((c) => c.id === "uuid-01-plan" && c.body.includes("01 Plan 산출물"));
+  assert.equal(gateSummaries.length, 2, "one summary per gate wait: the initial one and the re-opened one after rework");
+  assert.doesNotMatch(gateSummaries[0].body, /⚠️/, "the initial gate summary must not warn — 01-intent itself succeeded");
+  assert.match(gateSummaries[1].body, /⚠️/, "the re-opened gate summary must warn that the rework session failed");
+});
+
+// ── rework: a stale post-reset 'canceled' read must not burn a rework attempt (fix round 1, finding 2) ──
+
+test("rework: a 'canceled' read immediately after the unstarted reset, followed by 'completed', approves without a second rework attempt", async () => {
+  const repo = await makeRepo();
+  const runnerDir = await mkdtemp(join(tmpdir(), "sdlc-interview-runner-"));
+  // Sequence: initial gate poll -> canceled (rejection #1, triggers rework #1). Then, right after
+  // the card is moved back to "unstarted", the first re-read is still "canceled" (stale/lagging),
+  // and only the *next* read is "completed". Without the post-reset confirmation guard, that stale
+  // read would be misread as a second human rejection and burn a second rework attempt.
+  const rec = recordingSource({ "uuid-01-plan": ["canceled", "canceled", "completed"] });
+  const proceedChannel = proceedImmediatelyChannel();
+
+  await withStubs([NO_QUESTIONS], () => runPipeline(TICKET, makeConfig(repo), rec.source, runnerDir, undefined, proceedChannel.channel));
+
+  const log = await stageLog(runnerDir, "ENG-1");
+  const reworkRuns = log.filter((e) => e.stage === "01-plan-rework");
+  assert.equal(reworkRuns.length, 1, "only one rework attempt — the stale 'canceled' read must be absorbed, not treated as a second rejection");
+  assert.ok(log.find((e) => e.stage === "02-spec"), "02 must have run: the gate ended up approved");
+
+  const reworkComments = rec.comments.filter((c) => c.id === "uuid-01-plan" && /재작업 \d\/3/.test(c.body));
+  assert.deepEqual(reworkComments.map((c) => c.body), ["재작업 1/3"], "only a single '재작업 N/3' comment, never a 2/3");
+
+  const live = JSON.parse(await readFile(join(runnerDir, ".state", `${TICKET.key}.live.json`), "utf8")) as { phase: string };
+  assert.notEqual(live.phase, "aborted");
 });
 
 // ── resume-failure fallback ──────────────────────────────────────────────────
