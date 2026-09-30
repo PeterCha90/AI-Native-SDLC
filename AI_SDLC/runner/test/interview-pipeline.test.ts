@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { runPipeline } from "../src/pipeline.ts";
 import { STAGES, type StageId } from "../src/gate.ts";
 import type { Config } from "../src/config.ts";
+import { bundledPluginDir } from "../src/paths.ts";
 import type { IssueComment, NewTicket, StateType, Ticket, TicketSource } from "../src/adapters/types.ts";
 import type { InterviewChannel, InterviewOutcome } from "../src/interview.ts";
 
@@ -155,10 +156,12 @@ function recordingSource(states: Record<string, StateType[]>): Recorder {
   return { source, created, comments, stateChanges };
 }
 
-function makeConfig(repoPath: string, overrides: Partial<Config> = {}): Config {
+function makeConfig(repoPath: string, runnerDir: string, overrides: Partial<Config> = {}): Config {
   return {
     ticketSource: "linear",
     repoPath,
+    baseDir: runnerDir,
+    pluginDir: bundledPluginDir(),
     port: 3939,
     e2eDriver: "ego-lite",
     demoAppUrl: "http://localhost:5173",
@@ -293,7 +296,7 @@ test("interview: two questions answered resumes the same 01-intent session, then
   const { channel, calls } = answerOnceChannel();
 
   await withStubs([TWO_QUESTIONS, NO_QUESTIONS], async (env) => {
-    await runPipeline(TICKET, makeConfig(repo), rec.source, runnerDir, undefined, channel);
+    await runPipeline(TICKET, makeConfig(repo, runnerDir), rec.source, runnerDir, undefined, channel);
 
     assert.equal(calls.length, 1, "interview.ask must be called exactly once (second parse has 0 questions)");
     assert.equal(calls[0].round, 1);
@@ -325,7 +328,7 @@ test("interview: the original ticket gets exactly one Q&A comment for the single
   const rec = recordingSource({});
   const { channel } = answerOnceChannel();
 
-  await withStubs([TWO_QUESTIONS, NO_QUESTIONS], () => runPipeline(TICKET, makeConfig(repo), rec.source, runnerDir, undefined, channel));
+  await withStubs([TWO_QUESTIONS, NO_QUESTIONS], () => runPipeline(TICKET, makeConfig(repo, runnerDir), rec.source, runnerDir, undefined, channel));
 
   const ticketComments = rec.comments.filter((c) => c.id === TICKET.id);
   assert.equal(ticketComments.length, 1, "exactly one Q&A comment on the original ticket");
@@ -342,7 +345,7 @@ test("interview: interviewMaxRounds caps asking at 5 rounds even when questions 
   // Every queued content still has open questions, including after the 5th revise — the plan
   // clamps to its last entry once exhausted, and that last entry still has two open questions.
   await withStubs([TWO_QUESTIONS, TWO_QUESTIONS, TWO_QUESTIONS, TWO_QUESTIONS, TWO_QUESTIONS, TWO_QUESTIONS], () =>
-    runPipeline(TICKET, makeConfig(repo), rec.source, runnerDir, undefined, channel),
+    runPipeline(TICKET, makeConfig(repo, runnerDir), rec.source, runnerDir, undefined, channel),
   );
 
   assert.equal(calls.length, 5, "interview.ask must be called exactly 5 times (interviewMaxRounds), never a 6th");
@@ -356,7 +359,7 @@ test("interview: a 'proceed' outcome stops the loop without running a revise sta
   const proceedChannel = proceedImmediatelyChannel();
 
   await withStubs([TWO_QUESTIONS], async (env) => {
-    await runPipeline(TICKET, makeConfig(repo), rec.source, runnerDir, undefined, proceedChannel.channel);
+    await runPipeline(TICKET, makeConfig(repo, runnerDir), rec.source, runnerDir, undefined, proceedChannel.channel);
     assert.equal(proceedChannel.calls, 1, "asked exactly once before proceeding");
     const log = await readLog(env.logPath);
     const reviseCalls = log.filter((e) => e.prompt.includes("다음 답을 반영해"));
@@ -372,7 +375,7 @@ test("rework: a single 01-plan rejection reopens the gate as 'unstarted' with a 
   const rec = recordingSource({ "uuid-01-plan": ["canceled", "completed"] });
   const proceedChannel = proceedImmediatelyChannel();
 
-  await withStubs([NO_QUESTIONS, NO_QUESTIONS], () => runPipeline(TICKET, makeConfig(repo), rec.source, runnerDir, undefined, proceedChannel.channel));
+  await withStubs([NO_QUESTIONS, NO_QUESTIONS], () => runPipeline(TICKET, makeConfig(repo, runnerDir), rec.source, runnerDir, undefined, proceedChannel.channel));
 
   const log = await stageLog(runnerDir, "ENG-1");
   assert.ok(log.find((e) => e.stage === "01-plan-rework"), "a rework stage for 01-plan must have run");
@@ -391,7 +394,7 @@ test("rework: a rejected 03-build gate reworks under the label '03-plan-rework' 
   const rec = recordingSource({ "uuid-03-build": ["canceled", "completed"] });
   const proceedChannel = proceedImmediatelyChannel();
 
-  await withStubs([NO_QUESTIONS], () => runPipeline(TICKET, makeConfig(repo), rec.source, runnerDir, undefined, proceedChannel.channel));
+  await withStubs([NO_QUESTIONS], () => runPipeline(TICKET, makeConfig(repo, runnerDir), rec.source, runnerDir, undefined, proceedChannel.channel));
 
   const log = await stageLog(runnerDir, "ENG-1");
   assert.ok(log.find((e) => e.stage === "03-plan-rework"), "the 03 rework stage must be labeled '03-plan-rework'");
@@ -405,7 +408,7 @@ test("rework: 01-plan rejected through all reworkMaxAttempts aborts the pipeline
   const rec = recordingSource({ "uuid-01-plan": ["canceled"] }); // clamped: every poll reports canceled
   const proceedChannel = proceedImmediatelyChannel();
 
-  await withStubs([NO_QUESTIONS], () => runPipeline(TICKET, makeConfig(repo), rec.source, runnerDir, undefined, proceedChannel.channel));
+  await withStubs([NO_QUESTIONS], () => runPipeline(TICKET, makeConfig(repo, runnerDir), rec.source, runnerDir, undefined, proceedChannel.channel));
 
   const log = await stageLog(runnerDir, "ENG-1");
   const reworkRuns = log.filter((e) => e.stage === "01-plan-rework");
@@ -426,7 +429,7 @@ test("rework: a rejected 04-test gate does not trigger any rework stage and stil
   const rec = recordingSource({ "uuid-04-test": ["canceled"] });
   const proceedChannel = proceedImmediatelyChannel();
 
-  await withStubs([NO_QUESTIONS], () => runPipeline(TICKET, makeConfig(repo), rec.source, runnerDir, undefined, proceedChannel.channel));
+  await withStubs([NO_QUESTIONS], () => runPipeline(TICKET, makeConfig(repo, runnerDir), rec.source, runnerDir, undefined, proceedChannel.channel));
 
   const log = await stageLog(runnerDir, "ENG-1");
   assert.ok(!log.find((e) => e.stage === "04-test-rework"), "04 rejections must never trigger a rework run");
@@ -451,7 +454,7 @@ test("rework: when a rework AND its fallback both fail, the re-opened 01-plan ga
     // retry both fail, and gateWithRework's `latest` StageResult for the re-opened gate is that
     // failed result, not the (successful) initial 01-intent run.
     process.env.STUB_CLAUDE_FAIL_ON = "반려 사유:";
-    await runPipeline(TICKET, makeConfig(repo), rec.source, runnerDir, undefined, proceedChannel.channel);
+    await runPipeline(TICKET, makeConfig(repo, runnerDir), rec.source, runnerDir, undefined, proceedChannel.channel);
   });
 
   const log = await stageLog(runnerDir, "ENG-1");
@@ -477,7 +480,7 @@ test("rework: a 'canceled' read immediately after the unstarted reset, followed 
   const rec = recordingSource({ "uuid-01-plan": ["canceled", "canceled", "completed"] });
   const proceedChannel = proceedImmediatelyChannel();
 
-  await withStubs([NO_QUESTIONS], () => runPipeline(TICKET, makeConfig(repo), rec.source, runnerDir, undefined, proceedChannel.channel));
+  await withStubs([NO_QUESTIONS], () => runPipeline(TICKET, makeConfig(repo, runnerDir), rec.source, runnerDir, undefined, proceedChannel.channel));
 
   const log = await stageLog(runnerDir, "ENG-1");
   const reworkRuns = log.filter((e) => e.stage === "01-plan-rework");
@@ -501,7 +504,7 @@ test("resume failure: a failed revise run (ok:false, sessionJsonlPath:null) retr
 
   await withStubs([TWO_QUESTIONS, NO_QUESTIONS], async (env) => {
     process.env.STUB_CLAUDE_FAIL_ON = "다음 답을 반영해";
-    await runPipeline(TICKET, makeConfig(repo), rec.source, runnerDir, undefined, channel);
+    await runPipeline(TICKET, makeConfig(repo, runnerDir), rec.source, runnerDir, undefined, channel);
 
     const log = await readLog(env.logPath);
     const reviseCalls = log.filter((e) => e.prompt.includes("다음 답을 반영해"));

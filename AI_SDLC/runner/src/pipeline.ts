@@ -1,7 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import type { Config } from "./config.ts";
 import type { StateType, Ticket, TicketSource } from "./adapters/types.ts";
@@ -15,9 +14,6 @@ import { noInterview, parseOpenQuestions, type InterviewChannel } from "./interv
 const DEPTH_MARKER = /sdlc-depth:\s*(\d+)/i;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-
-/** Absolute path to the plugin that carries the skills, hooks and subagents each stage relies on. */
-const PLUGIN_DIR = resolve(fileURLToPath(new URL("../..", import.meta.url)), "plugin");
 
 /** Reads the `sdlc-depth: N` marker embedded in an auto-generated ticket's body. Absent = depth 0 (a human-created ticket). */
 export function extractDepth(ticket: Pick<Ticket, "body">): number {
@@ -94,6 +90,7 @@ async function runAndLog(
   prompt: string,
   cwd: string,
   events: PipelineEvents,
+  pluginDir: string,
   allowedTools?: string[],
   resumeSessionId?: string,
 ): Promise<StageResult> {
@@ -101,7 +98,7 @@ async function runAndLog(
   await writeLive(runnerDir, key, { stage, phase: "running", since: startedAt });
   console.log(`[pipeline:${key}] ${stage} starting`);
   await events.stageStarted(key, stage);
-  const result = await runStage({ prompt, cwd, allowedTools, pluginDir: PLUGIN_DIR, resumeSessionId });
+  const result = await runStage({ prompt, cwd, allowedTools, pluginDir, resumeSessionId });
   const endedAt = new Date().toISOString();
   await appendStateLog(runnerDir, key, {
     stage,
@@ -204,7 +201,7 @@ async function setupGates(
     `issueId 는 Linear 내부 UUID 여야 한다 (식별자 ENG-12 가 아니라).`,
   ].join("\n");
 
-  await runAndLog(runnerDir, key, "00-setup", prompt, repoRoot, events, ["Write", "mcp__linear__*"]);
+  await runAndLog(runnerDir, key, "00-setup", prompt, repoRoot, events, config.pluginDir, ["Write", "mcp__linear__*"]);
   // Throws with an explicit message if the agent didn't produce a usable map — the
   // pipeline must not fall through into an ungated run.
   return readGateMap(runnerDir, key);
@@ -399,9 +396,9 @@ export async function runPipeline(
     fallbackPrompt: string,
     resumeSessionId: string | undefined,
   ): Promise<StageResult> {
-    let result = await runAndLog(runnerDir, key, stageLabel, prompt, workDir, ev, DOC_WRITE_TOOLS, resumeSessionId);
+    let result = await runAndLog(runnerDir, key, stageLabel, prompt, workDir, ev, config.pluginDir, DOC_WRITE_TOOLS, resumeSessionId);
     if (!result.ok && result.sessionJsonlPath === null) {
-      result = await runAndLog(runnerDir, key, stageLabel, fallbackPrompt, workDir, ev, DOC_WRITE_TOOLS);
+      result = await runAndLog(runnerDir, key, stageLabel, fallbackPrompt, workDir, ev, config.pluginDir, DOC_WRITE_TOOLS);
     }
     return result;
   }
@@ -509,6 +506,7 @@ export async function runPipeline(
       `티켓: ${ticket.title}\n\n${ticket.body}\n\n출처: ${ticket.url}`,
     workDir,
     ev,
+    config.pluginDir,
     DOC_WRITE_TOOLS,
   );
   const afterInitialInterview = await runInterviewLoop({ sessionId: intentResult.sessionId, latest: intentResult });
@@ -532,6 +530,7 @@ export async function runPipeline(
     `sdlc-spec 스킬을 사용해 ${docsIntent} 를 읽고 ${docsSpec} 를 작성하라. 정책 충돌은 해당 설계 항목 바로 아래 인라인으로 표시하라.`,
     workDir,
     ev,
+    config.pluginDir,
     DOC_WRITE_TOOLS,
   );
   const design02 = await gateWithRework(
@@ -554,6 +553,7 @@ export async function runPipeline(
     `sdlc-plan 스킬을 사용해 ${docsSpec} 를 읽고 ${docsPlan} 를 작성하라. "무엇이 깨질 수 있는가" 심문을 반드시 포함하라. 코드는 아직 수정하지 마라.`,
     workDir,
     ev,
+    config.pluginDir,
     DOC_WRITE_TOOLS,
   );
   const build03 = await gateWithRework(
@@ -580,6 +580,7 @@ export async function runPipeline(
       `plan-drift 훅이 커밋 시점에 계획과 실제 변경을 대조한다. 저장소 CLAUDE.md 의 규칙을 따르라.`,
     workDir,
     ev,
+    config.pluginDir,
   );
 
   // ── 04 Test ─────────────────────────────────────────────────────────────────
@@ -591,6 +592,7 @@ export async function runPipeline(
       `이건 버그 수정 작업일 수 있으니 테스트를 고쳐서 통과시키지 마라. 마지막에 verifier 서브에이전트로 독립 검증을 받아라.`,
     workDir,
     ev,
+    config.pluginDir,
   );
 
   const testCmd = await detectTestCommand(workDir);
@@ -631,6 +633,7 @@ export async function runPipeline(
         `저장소 REVIEW.md 의 정책을 따르고, ${docsSpec} 의 요구사항 대비 준수 여부를 확인하라. 승인하지 마라 — 발견만 보고하라.`,
       workDir,
       ev,
+      config.pluginDir,
       ["Read", "Glob", "Grep", "Bash(git diff *)", "Bash(git log *)", "Bash(git status)", "Skill"],
     );
     // The release manager needs to know whether a review actually happened. An unreported failed
@@ -760,6 +763,7 @@ async function runMaintain(
         `읽기 전용으로 원인만 진단하고 보고하라. 파일을 쓰거나 티켓을 만들지 마라.\n\n감지 출력:\n${detectOutput}\n\n${input.summary}`,
       repoRoot,
       events,
+      config.pluginDir,
       ["Read", "Glob", "Grep", "Bash(git log *)", "Bash(git diff *)", "Skill"],
     );
     return;
@@ -797,6 +801,7 @@ async function runMaintain(
       `감지 출력:\n${detectOutput}\n\n${input.summary}`,
     repoRoot,
     events,
+    config.pluginDir,
     ["Read", "Write", "Glob", "Grep", "Skill", "mcp__linear__*"],
   );
   // Closing the loop must not depend on the agent's MCP call succeeding. If the sdlc-maintain

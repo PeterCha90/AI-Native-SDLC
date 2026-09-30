@@ -17,6 +17,8 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
   return {
     ticketSource: "linear",
     repoPath: "/tmp/unused",
+    baseDir: "/tmp/unused",
+    pluginDir: "/tmp/unused-plugin",
     port: 0,
     e2eDriver: "ego-lite",
     demoAppUrl: "http://localhost:5173",

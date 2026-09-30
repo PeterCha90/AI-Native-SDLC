@@ -1,9 +1,8 @@
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { StageId } from "./gate.ts";
-
-const RUNNER_DIR = fileURLToPath(new URL("..", import.meta.url));
+import { bundledPluginDir, defaultHome, packageRoot, repoLayout } from "./paths.ts";
+import type { Credentials } from "./user-config.ts";
 
 export type TicketSourceKind = "linear" | "jira";
 export type E2EDriverKind = "ego-lite" | "aside";
@@ -61,6 +60,15 @@ export interface FileConfig {
 export interface Config {
   ticketSource: TicketSourceKind;
   repoPath: string;
+  /**
+   * Parent of `.state/` and `.worktrees/`. Dev path (running from the runner's own checkout,
+   * `sdlc.config.json` found via `SDLC_CONFIG_PATH` or the package default): the runner package
+   * root. User path (`npx ai-sdlc-runner`, §4 of the design): `repoLayout(home, repo).dir`, i.e.
+   * `<home>/repos/<repoKey>/`.
+   */
+  baseDir: string;
+  /** Absolute path to the plugin bundled with the package — see `bundledPluginDir()` in paths.ts. */
+  pluginDir: string;
   port: number;
   e2eDriver: E2EDriverKind;
   demoAppUrl: string;
@@ -111,21 +119,87 @@ function fail(message: string): never {
   process.exit(1);
 }
 
+export interface LoadConfigOptions {
+  env?: NodeJS.ProcessEnv;
+  /** Target repo (user path only — see below). Defaults to `process.cwd()`. */
+  repo?: string;
+  /** `~/.ai-sdlc`-style home (user path only). Defaults to `defaultHome(env)`. */
+  home?: string;
+  /** Secrets read from `credentials.json` (user path). Env vars still win over these — see below. */
+  credentials?: Credentials;
+  /** Settings read from `config.json` (user path) — same shape as `sdlc.config.json`. */
+  fileConfig?: FileConfig;
+}
+
+const OPTIONS_KEYS = ["env", "repo", "home", "credentials", "fileConfig"] as const;
+
 /**
- * Loads AI_SDLC/runner/sdlc.config.json (non-secret settings) merged with
- * environment variables (secrets ONLY — never written to the config file).
- * Exits the process with a clear message if a required value is missing.
+ * `loadConfig` has always taken a single `NodeJS.ProcessEnv`-shaped object — every existing
+ * caller (and 180 tests) does `loadConfig(process.env)` or `loadConfig({ SOME_VAR: "x" })`.
+ * The new `LoadConfigOptions` shape is distinguished structurally: a real env object's keys are
+ * env var names, which never collide with the five fixed `LoadConfigOptions` keys.
  */
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const configPath = env.SDLC_CONFIG_PATH ?? resolve(RUNNER_DIR, "sdlc.config.json");
-  const file = loadFileConfig(configPath);
+function normalizeOptions(opts?: LoadConfigOptions | NodeJS.ProcessEnv): LoadConfigOptions {
+  if (!opts) return {};
+  if (OPTIONS_KEYS.some((key) => key in opts)) return opts as LoadConfigOptions;
+  return { env: opts as NodeJS.ProcessEnv };
+}
+
+/**
+ * Loads settings + secrets for one of two layouts (design §4):
+ *
+ * - **Dev path** (today's `AI_SDLC/runner` checkout): `SDLC_CONFIG_PATH` env var if set, else the
+ *   package's own `sdlc.config.json`. `baseDir` is the runner package root either way — `.state`/
+ *   `.worktrees` live where they always have.
+ * - **User path** (`npx ai-sdlc-runner`): only entered when `SDLC_CONFIG_PATH` is unset AND
+ *   `opts.fileConfig` is given. `baseDir` is `repoLayout(home, repo).dir` and `repoPath` is `repo`
+ *   itself (not resolved against the package root).
+ *
+ * Secrets: an env var always wins; otherwise `opts.credentials` (read from `credentials.json` by
+ * the caller) supplies it. `SLACK_BOT_TOKEN`/`SLACK_APP_TOKEN`/`LINEAR_API_KEY`/
+ * `LINEAR_WEBHOOK_SECRET` map to `slackBotToken`/`slackAppToken`/`linearApiKey`/`linearWebhookSecret`.
+ *
+ * Exits the process with a clear message if a required value is missing either way.
+ */
+export function loadConfig(opts?: LoadConfigOptions | NodeJS.ProcessEnv): Config {
+  const o = normalizeOptions(opts);
+  const env = o.env ?? process.env;
+  const pluginDir = bundledPluginDir();
+
+  const devConfigPath: string | null =
+    env.SDLC_CONFIG_PATH ?? (o.fileConfig ? null : resolve(packageRoot(), "sdlc.config.json"));
+
+  let baseDir: string;
+  let file: FileConfig;
+  let repoPath: string;
+
+  if (devConfigPath !== null) {
+    file = loadFileConfig(devConfigPath);
+    baseDir = packageRoot();
+    repoPath = resolve(baseDir, file.repoPath ?? "../..");
+  } else {
+    // o.fileConfig is guaranteed set here — devConfigPath is null only when SDLC_CONFIG_PATH is
+    // unset AND o.fileConfig was given.
+    file = o.fileConfig as FileConfig;
+    const home = o.home ?? defaultHome(env);
+    const repo = o.repo ?? process.cwd();
+    baseDir = repoLayout(home, repo).dir;
+    repoPath = resolve(repo);
+  }
 
   const ticketSource = file.ticketSource ?? "linear";
 
-  // Slack turns on only when both tokens are present (secrets, env-only) AND the channel is
-  // configured in the file — any one missing means "Slack is off", not "half-configured".
-  const slackBotToken = env.SLACK_BOT_TOKEN ?? "";
-  const slackAppToken = env.SLACK_APP_TOKEN ?? "";
+  // Env var wins over opts.credentials, which wins over "unset". A real (possibly empty-string)
+  // env var always short-circuits opts.credentials — the same "env beats file" priority as every
+  // other setting here.
+  const creds = o.credentials ?? {};
+  const slackBotToken = env.SLACK_BOT_TOKEN ?? creds.slackBotToken ?? "";
+  const slackAppToken = env.SLACK_APP_TOKEN ?? creds.slackAppToken ?? "";
+  const linearApiKey = env.LINEAR_API_KEY ?? creds.linearApiKey ?? "";
+  const linearWebhookSecret = env.LINEAR_WEBHOOK_SECRET ?? creds.linearWebhookSecret ?? "";
+
+  // Slack turns on only when both tokens are present AND the channel is configured in the file —
+  // any one missing means "Slack is off", not "half-configured".
   const slack: Config["slack"] =
     slackBotToken && slackAppToken && file.slack?.channelId
       ? {
@@ -143,7 +217,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 
   const config: Config = {
     ticketSource,
-    repoPath: resolve(RUNNER_DIR, file.repoPath ?? "../.."),
+    repoPath,
+    baseDir,
+    pluginDir,
     port: Number(env.PORT ?? file.port ?? 3939),
     e2eDriver: file.e2eDriver ?? "ego-lite",
     demoAppUrl: file.demoAppUrl ?? "http://localhost:5173",
@@ -157,8 +233,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     detectScript: file.detectScript ?? "ops/detect.sh",
     detectMetric: file.detectMetric ?? "e2e_failure_rate",
     linear: {
-      webhookSecret: env.LINEAR_WEBHOOK_SECRET ?? "",
-      apiKey: env.LINEAR_API_KEY ?? "",
+      webhookSecret: linearWebhookSecret,
+      apiKey: linearApiKey,
       teamId: file.linearTeamId ?? "",
     },
     jira: {

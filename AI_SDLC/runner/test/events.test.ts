@@ -10,6 +10,7 @@ import { listActiveRuns, type LiveStatus, type RunMeta } from "../src/state.ts";
 import { runPipeline } from "../src/pipeline.ts";
 import { STAGES, type StageId } from "../src/gate.ts";
 import type { Config } from "../src/config.ts";
+import { bundledPluginDir } from "../src/paths.ts";
 import type { IssueComment, NewTicket, StateType, Ticket, TicketSource } from "../src/adapters/types.ts";
 
 // ── safeEvents ────────────────────────────────────────────────────────────────
@@ -181,10 +182,12 @@ function fakeSource(): TicketSource {
   };
 }
 
-function makeConfig(repoPath: string): Config {
+function makeConfig(repoPath: string, runnerDir: string): Config {
   return {
     ticketSource: "linear",
     repoPath,
+    baseDir: runnerDir,
+    pluginDir: bundledPluginDir(),
     port: 3939,
     e2eDriver: "ego-lite",
     demoAppUrl: "http://localhost:5173",
@@ -262,7 +265,7 @@ test("pipeline event order: starts with runStarted, ends with runFinished, each 
   const runnerDir = await mkdtemp(join(tmpdir(), "sdlc-events-runner-"));
   const { events, calls } = recordingEvents();
 
-  await withStubs(() => runPipeline(TICKET, makeConfig(repo), fakeSource(), runnerDir, events));
+  await withStubs(() => runPipeline(TICKET, makeConfig(repo, runnerDir), fakeSource(), runnerDir, events));
 
   assert.ok(calls.length > 0, "at least some events must have fired");
   assert.equal(calls[0], "runStarted:ENG-1");
@@ -295,7 +298,7 @@ function throwingEvents(): PipelineEvents {
 test("gated pipeline: still completes even when every events handler throws (runPipeline wraps events itself)", async () => {
   const repo = await makeRepo();
   const runnerDir = await mkdtemp(join(tmpdir(), "sdlc-events-runner-"));
-  const config: Config = { ...makeConfig(repo), autoApprove: false };
+  const config: Config = { ...makeConfig(repo, runnerDir), autoApprove: false };
 
   // fakeSource().getStateType always reports "completed", so every gate is approved on the
   // first poll — this run exercises setupGates/gateWaiting/gateResolved, not just the
@@ -313,7 +316,7 @@ test("gated pipeline: still completes even when every events handler throws (run
 test("gated pipeline: gateWaiting for 01-plan fires before its gateResolved(approved=true)", async () => {
   const repo = await makeRepo();
   const runnerDir = await mkdtemp(join(tmpdir(), "sdlc-events-runner-"));
-  const config: Config = { ...makeConfig(repo), autoApprove: false };
+  const config: Config = { ...makeConfig(repo, runnerDir), autoApprove: false };
 
   const calls: Array<{ name: string; stage?: string; approved?: boolean }> = [];
   const events: PipelineEvents = {
