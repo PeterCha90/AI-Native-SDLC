@@ -33,9 +33,8 @@
   Slack 토큰 둘 다 있으면 `linearTrigger` 기본값이 `"poll"`이라 `LINEAR_WEBHOOK_SECRET`과 터널이 필요 없다. webhook으로 시연하려면 대신 `LINEAR_WEBHOOK_SECRET`을 설정하고 `AI_SDLC/README.md`의 "3-B. 자동으로 돌리기" 절차를 따른다.
 
   팀 ID는 환경변수가 아니다. `config.ts`에는 `LINEAR_TEAM_ID` 폴백이 없으므로 `runner/sdlc.config.json`의
-  `linearTeamId`에 직접 적어야 한다. 이 저장소에는 시연 워크스페이스 값이 이미 채워져 있다
-  (`Peter's Place` = `bb9ddb14-778f-49bd-b8e5-429c737eab00`). 다른 워크스페이스로 시연하면
-  `mcp__linear__list_teams`로 팀 ID를 새로 조회해 바꾼다.
+  `linearTeamId`에 직접 적어야 한다. 저장소에는 빈 값으로 들어 있으니 시연할 워크스페이스의 팀 ID를 적는다(커밋하지 않는다). 팀 ID는
+  `mcp__linear__list_teams`로 조회한다.
 - 시연 팀의 워크플로 상태에 **Done(`completed`)과 Canceled(`canceled`)가 있는지** 확인한다. 게이트 승인/반려가
   이 두 상태 타입으로만 판정된다. `mcp__linear__list_issue_statuses`로 확인할 수 있다.
 - `sdlc-auto` 라벨은 미리 만들어둘 필요가 없다 — 없으면 `resolveLabelIds`가 만든다. 다만 라벨이 정상적으로
