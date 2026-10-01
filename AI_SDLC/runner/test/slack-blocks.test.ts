@@ -36,7 +36,9 @@ test("stageLabel maps known stage/gate ids to column labels, falls back to origi
   assert.equal(stageLabel("01-intent"), "01 Plan");
   assert.equal(stageLabel("03-build"), "03 Build");
   assert.equal(stageLabel("gate:04-test"), "04 Test");
-  assert.equal(stageLabel("00-setup"), "00 Setup");
+  // There is no 00-setup stage any more (gates are created lazily) — an unknown prefix falls back
+  // to the original id unchanged, same as any other unrecognized stage.
+  assert.equal(stageLabel("00-setup"), "00-setup");
   assert.equal(stageLabel("02-spec"), "02 Design");
   assert.equal(stageLabel("04-test-loop"), "04 Test");
   assert.equal(stageLabel("05-review"), "05 Deploy");
@@ -167,6 +169,84 @@ test("gateMessage truncates a very long summary to fit the section limit", () =>
   const summarySection = sections.find((s: any) => s.text.text.startsWith("x"));
   assert.ok(summarySection, "expected a section containing the summary");
   assert.ok(summarySection.text.text.length <= 3000);
+});
+
+// ── gateMessage content/hint (the approver reads the artifact right in Slack) ──────────────────
+
+function findMarkdownBlock(blocks: unknown[]): any {
+  return blocks.find((b: any) => b.type === "markdown");
+}
+
+test("gateMessage waiting with content renders it as a markdown block (not mrkdwn-escaped) plus the hint, instead of the plain summary section", () => {
+  const content = "# 02 Design 산출물\n\n`docs/spec/ENG-12.md`\n\n- 변경점 A <B> & C\n- 변경점 D";
+  const msg = gateMessage({
+    key: "ENG-12",
+    ticketId: "uuid-12",
+    stage: "02-design",
+    role: "Product Owner",
+    summary: "02 Design 산출물: `docs/spec/ENG-12.md`\n\n...\n\n정책 충돌을 확인해 주세요.",
+    content,
+    hint: "'정책 충돌' 항목을 확인해 주세요.",
+    gateUrl: "https://linear.app/x/issue/ENG-12-gate",
+    state: "waiting",
+  });
+
+  const markdownBlock = findMarkdownBlock(msg.blocks);
+  assert.ok(markdownBlock, "expected a markdown block carrying the artifact content");
+  // Standard Markdown, passed through verbatim — never run through the mrkdwn escaper.
+  assert.equal(markdownBlock.text, content);
+  assert.ok(markdownBlock.text.includes("<B>"), "raw markdown must not be HTML-escaped");
+
+  const sections = findSectionBlocks(msg.blocks);
+  assert.ok(
+    sections.every((s: any) => !s.text.text.startsWith("02 Design 산출물")),
+    "the old plain-text summary section must not also be rendered once content is supplied",
+  );
+  const hintSection = sections.find((s: any) => s.text.text.includes("정책 충돌"));
+  assert.ok(hintSection, "expected the hint shown after the content");
+  assert.match(hintSection.text.text, /검토하신 뒤 승인 또는 반려해 주세요/);
+});
+
+test("gateMessage waiting without content falls back to the plain summary section (back-compat)", () => {
+  const msg = gateMessage({
+    key: "ENG-12",
+    ticketId: "uuid-12",
+    stage: "02-design",
+    role: "Product Owner",
+    summary: "요약",
+    gateUrl: "u",
+    state: "waiting",
+  });
+  assert.equal(findMarkdownBlock(msg.blocks), undefined);
+  const sections = findSectionBlocks(msg.blocks);
+  assert.ok(sections.some((s: any) => s.text.text === "요약"));
+});
+
+test("gateMessage waiting with very long content truncates at a line boundary and appends the truncation marker", () => {
+  const lines = Array.from({ length: 2000 }, (_, i) => `줄 ${i}`);
+  const content = lines.join("\n");
+  assert.ok(content.length > 11_000, "fixture must actually exceed the truncation threshold");
+
+  const msg = gateMessage({
+    key: "ENG-12",
+    ticketId: "uuid-12",
+    stage: "01-plan",
+    role: "Product Owner",
+    summary: "s",
+    content,
+    hint: "확인해 주세요.",
+    gateUrl: "u",
+    state: "waiting",
+  });
+
+  const markdownBlock = findMarkdownBlock(msg.blocks);
+  assert.ok(markdownBlock, "expected a markdown block");
+  assert.ok(markdownBlock.text.length < content.length, "the content must have been truncated");
+  assert.match(markdownBlock.text, /문서가 길어 앞부분만 표시했습니다/);
+  assert.ok(!markdownBlock.text.endsWith("줄 1999"), "truncation must cut before the end of the fixture");
+  // Cut at a line boundary: everything before the marker must be whole lines from the fixture.
+  const beforeMarker = markdownBlock.text.split("\n\n_(문서가")[0];
+  assert.ok(lines.join("\n").startsWith(beforeMarker), "truncation must land on a line boundary, not mid-line");
 });
 
 test("gateMessage approved shows who approved, or Linear when resolved there", () => {
@@ -305,6 +385,40 @@ test("gateMessage resolved states have no action buttons", () => {
     });
     assert.equal(findActionsBlock(msg.blocks), undefined, `state ${state} should have no actions`);
   }
+});
+
+test("gateMessage with an empty gateUrl omits the Linear link entirely, instead of rendering a broken '<|...>' link", () => {
+  for (const state of ["waiting", "approved", "rejected", "timeout"] as const) {
+    const msg = gateMessage({
+      key: "ENG-12",
+      ticketId: "uuid-12",
+      stage: "01-plan",
+      role: "Engineer",
+      summary: "s",
+      gateUrl: "",
+      state,
+    });
+    assert.ok(!msg.text.includes("<|"), `state ${state}: text must not contain a broken empty link`);
+    assert.ok(!JSON.stringify(msg.blocks).includes("<|"), `state ${state}: blocks must not contain a broken empty link`);
+    const contextBlocks = (msg.blocks as any[]).filter((b) => b.type === "context");
+    assert.ok(
+      !contextBlocks.some((b) => /Linear에서 보기/.test(JSON.stringify(b))),
+      `state ${state}: no "Linear에서 보기" link should be rendered when gateUrl is empty`,
+    );
+  }
+});
+
+test("gateMessage with a non-empty gateUrl still renders the Linear link normally", () => {
+  const msg = gateMessage({
+    key: "ENG-12",
+    ticketId: "uuid-12",
+    stage: "01-plan",
+    role: "Engineer",
+    summary: "s",
+    gateUrl: "https://linear.app/x/issue/ENG-12-gate",
+    state: "waiting",
+  });
+  assert.match(JSON.stringify(msg.blocks), /<https:\/\/linear\.app\/x\/issue\/ENG-12-gate\|Linear에서 보기>/);
 });
 
 test("gateMessage rejected with a rework attempt appends the '재작업 N/M' suffix", () => {

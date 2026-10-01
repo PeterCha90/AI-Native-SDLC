@@ -369,7 +369,7 @@ test("notifier.postTicketNotice: posts once and creates the thread file", async 
   const runnerDir = await tmpRunnerDir();
   const stateDir = join(runnerDir, ".state");
   const client = fakeClient();
-  const notifier = createSlackNotifier({ client, channel: "C1", stateDir, roleGroups: {} });
+  const notifier = createSlackNotifier({ client, channel: "C1", stateDir, runnerDir, roleGroups: {} });
 
   await notifier.postTicketNotice(RECENT_ISSUE, "new");
 
@@ -384,7 +384,7 @@ test("notifier: stageStarted then stageFinished update the same message ts", asy
   const runnerDir = await tmpRunnerDir();
   const stateDir = join(runnerDir, ".state");
   const client = fakeClient();
-  const notifier = createSlackNotifier({ client, channel: "C1", stateDir, roleGroups: {} });
+  const notifier = createSlackNotifier({ client, channel: "C1", stateDir, runnerDir, roleGroups: {} });
 
   await notifier.runStarted({
     key: "ENG-7",
@@ -410,7 +410,7 @@ test("notifier.stageReworking: updates the existing gate message to show '재작
   const runnerDir = await tmpRunnerDir();
   const stateDir = join(runnerDir, ".state");
   const client = fakeClient();
-  const notifier = createSlackNotifier({ client, channel: "C1", stateDir, roleGroups: {} });
+  const notifier = createSlackNotifier({ client, channel: "C1", stateDir, runnerDir, roleGroups: {} });
 
   await notifier.gateWaiting("ENG-7", "01-plan", "Product Owner", { issueId: "gate-1", key: "GATE-1", url: "http://x/gate-1" }, "요약");
   await notifier.stageReworking?.("ENG-7", "01-plan", 1, 3, "재검토 필요");
@@ -420,11 +420,40 @@ test("notifier.stageReworking: updates the existing gate message to show '재작
   assert.match(lastUpdate.text, /재작업 1\/3/);
 });
 
+test("notifier.stageReworking: the re-opened gate message carries the real gate card url (the card is reused, not recreated)", async () => {
+  const runnerDir = await tmpRunnerDir();
+  const stateDir = join(runnerDir, ".state");
+  const client = fakeClient();
+  await writeGateMap(runnerDir, "ENG-7"); // simulates the card already created lazily for 01-plan
+  const notifier = createSlackNotifier({ client, channel: "C1", stateDir, runnerDir, roleGroups: {} });
+
+  await notifier.gateWaiting("ENG-7", "01-plan", "Product Owner", { issueId: "gate-uuid", key: "GATE-01-plan", url: "http://x/01-plan" }, "요약");
+  await notifier.stageReworking?.("ENG-7", "01-plan", 1, 3, "재검토 필요");
+
+  const lastUpdate = client.updated[client.updated.length - 1];
+  assert.match(JSON.stringify(lastUpdate.blocks), /http:\/\/x\/01-plan/, "the rework message must link back to the real (reused) gate card");
+  assert.ok(!JSON.stringify(lastUpdate.blocks).includes("<|"), "must never render a broken empty link");
+});
+
+test("notifier.gateResolved (resolved directly in Linear): the resolved message carries the real gate card url", async () => {
+  const runnerDir = await tmpRunnerDir();
+  const stateDir = join(runnerDir, ".state");
+  const client = fakeClient();
+  await writeGateMap(runnerDir, "ENG-7");
+  const notifier = createSlackNotifier({ client, channel: "C1", stateDir, runnerDir, roleGroups: {} });
+
+  await notifier.gateWaiting("ENG-7", "01-plan", "Product Owner", { issueId: "gate-uuid", key: "GATE-01-plan", url: "http://x/01-plan" }, "요약");
+  await notifier.gateResolved("ENG-7", "01-plan", true);
+
+  const lastUpdate = client.updated[client.updated.length - 1];
+  assert.match(JSON.stringify(lastUpdate.blocks), /http:\/\/x\/01-plan/);
+});
+
 test("notifier.interviewAnswered: posts a note into the ticket thread naming the round and answer count", async () => {
   const runnerDir = await tmpRunnerDir();
   const stateDir = join(runnerDir, ".state");
   const client = fakeClient();
-  const notifier = createSlackNotifier({ client, channel: "C1", stateDir, roleGroups: {} });
+  const notifier = createSlackNotifier({ client, channel: "C1", stateDir, runnerDir, roleGroups: {} });
 
   await notifier.runStarted({
     key: "ENG-7",
@@ -445,23 +474,24 @@ test("notifier.interviewAnswered: posts a note into the ticket thread naming the
   assert.match(posted.text, /round 2|2회|2\)/);
 });
 
-test("notifier.gateWaiting: posts with reply_broadcast true", async () => {
+test("notifier.gateWaiting: never broadcasts into the channel — the gate post stays inside the ticket thread", async () => {
   const runnerDir = await tmpRunnerDir();
   const stateDir = join(runnerDir, ".state");
   const client = fakeClient();
-  const notifier = createSlackNotifier({ client, channel: "C1", stateDir, roleGroups: {} });
+  const notifier = createSlackNotifier({ client, channel: "C1", stateDir, runnerDir, roleGroups: {} });
 
   await notifier.gateWaiting("ENG-7", "01-plan", "Product Owner", { issueId: "gate-1", key: "GATE-1", url: "http://x/gate-1" }, "요약");
 
-  const gatePost = client.posted.find((p: any) => p.reply_broadcast === true);
-  assert.ok(gatePost, "gateWaiting must post with reply_broadcast: true");
+  const gatePost = client.posted.find((p: any) => p.text?.includes("승인이 필요합니다"));
+  assert.ok(gatePost, "expected the gate-waiting message to have been posted");
+  assert.ok(!gatePost.reply_broadcast, "gateWaiting must not set reply_broadcast — it would also echo into the channel");
 });
 
 test("notifier.gateWaiting clears a stale gateResolvedBy for the stage so a second round's gateResolved (Linear) can update the message", async () => {
   const runnerDir = await tmpRunnerDir();
   const stateDir = join(runnerDir, ".state");
   const client = fakeClient();
-  const notifier = createSlackNotifier({ client, channel: "C1", stateDir, roleGroups: {} });
+  const notifier = createSlackNotifier({ client, channel: "C1", stateDir, runnerDir, roleGroups: {} });
   const gateRef = { issueId: "gate-1", key: "GATE-1", url: "http://x/gate-1" };
 
   // Round 1: gate opens, then gets resolved via the Slack button path — handleGateAction records

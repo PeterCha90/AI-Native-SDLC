@@ -130,12 +130,12 @@ export LINEAR_API_KEY=...          # 게이트 상태 폴링·코멘트·후속 
 대상 저장소 경로, e2e 드라이버, worktree 사용 여부, 게이트 역할/폴링 간격/타임아웃)도 `sdlc.config.json`에
 있다. `repoPath`는 `../todo-app`으로 고정돼 있다 — 러너는 이 저장소의 `AI_SDLC/todo-app/`을 대상으로 돈다.
 
-**`LINEAR_API_KEY`만으로는 부족하다.** 첫 단계인 `00-setup`은 이 환경변수를 안 쓴다 — Claude Code 세션
-안에서 **Linear MCP 커넥터**로 승인 게이트 하위 이슈 6개를 만든다. 즉 파이프라인을 돌리는 `claude` 세션이
-Linear에 MCP로 인증되어 있어야 한다. `LINEAR_API_KEY`는 그다음부터, 러너 프로세스 자신이 게이트 상태를
-폴링하고 코멘트를 남기고(GraphQL) 06 Maintain에서 후속 티켓을 만들 때 쓴다. 역할이 갈린다 — **에이전트는
-MCP로 Linear에 쓰고, 러너는 API 키로 GraphQL을 통해 읽는다.** 둘 중 하나만 되어 있으면 게이트가 아예
-안 만들어지거나(MCP 미인증), 만들어진 게이트를 러너가 못 읽는다(API 키 누락).
+게이트 카드는 Claude 세션이 아니라 **러너 프로세스 자신**이 `LINEAR_API_KEY`로(GraphQL, MCP 아님) 만든다
+— 각 단계가 끝날 때마다 그 단계의 게이트 카드 하나씩이다. 시작부터 여섯 장을 미리 만들어 두지 않는다.
+같은 키로 게이트 상태를 폴링하고 코멘트를 남기고(승인 대기 중엔 산출물 전체를, 긴 문서는 요약과 함께)
+06 Maintain에서 후속 티켓도 만든다. 카드를 못 만들면 그 자리에서 파이프라인이 멈춘다 — 승인 없이 넘어가는
+경로는 없다. Claude Code에 Linear MCP가 연결돼 있지 않아도 시작에는 지장이 없다 — MCP는 06 Maintain의
+후속 티켓 생성에서만 우선 쓰이고, 없으면 같은 API로 대체된다.
 
 ### 실행
 
@@ -148,8 +148,9 @@ Linear webhook을 로컬로 넣으려면 터널이 필요하다. webhook URL은 
 
 ### 승인 게이트 — Linear 카드를 옮기는 것이 승인이다
 
-티켓이 들어오면 `00-setup` 단계가 원본 티켓 아래 하위 이슈 6개를 만든다. 하나가 게이트 하나, 제목은
-`[gate] <stage> — 승인자: <역할>`이고, 매핑은 `runner/.state/<key>.gates.json`에 쓰인다.
+각 단계가 끝나고 승인을 기다릴 때, 러너가 원본 티켓 아래 그 단계의 하위 이슈를 하나 만든다. 제목은
+`[gate] <stage> — 승인자: <역할>`이고, 매핑은 `runner/.state/<key>.gates.json`에 쓰인다. 재작업(01·02·03
+반려 후 재실행)은 새 카드를 만들지 않고 같은 카드를 재사용한다.
 
 승인 신호는 매직 문자열이 아니라 Linear의 기본 상태 전이다 — 하위 이슈를 **Done**으로 옮기면 승인,
 **Canceled**로 옮기고 사유를 코멘트로 남기면 반려다. 그 외 상태는 대기: 러너가 `gatePollIntervalMs`
@@ -159,9 +160,9 @@ Linear webhook을 로컬로 넣으려면 터널이 필요하다. webhook URL은 
 역할은 `gateRoles`에서 온다: 01 Plan·02 Design은 Product Owner, 03 Build는 Engineer, 04 Test는
 Code Owner, 05 Deploy는 Release Manager, 06 Maintain은 Service Owner.
 
-게이트 맵 파일이 없거나 형식이 깨졌으면 러너는 **파이프라인을 아예 시작하지 않고 중단한다**
-(`gate.ts`의 `readGateMap`). 게이트 없이 6단계가 조용히 다 도는 경로는 의도적으로 만들지 않았다 — 그런
-경로가 있으면 승인 없는 배포가 "그냥 아직 아무도 못 봤을 뿐"인 상태로 방치되기 쉽다.
+게이트 카드를 못 만들면(Linear API 실패 등) 러너는 그 자리에서 파이프라인을 중단한다. 게이트 없이
+6단계가 조용히 다 도는 경로는 의도적으로 만들지 않았다 — 그런 경로가 있으면 승인 없는 배포가 "그냥
+아직 아무도 못 봤을 뿐"인 상태로 방치되기 쉽다.
 
 리허설용으로 `SDLC_AUTO_APPROVE=1`을 설정하면 모든 게이트를 건너뛴다. 건너뛸 때마다 그 사실을 로그에
 남긴다 — 조용히 넘어가지 않는다.
@@ -172,7 +173,6 @@ Code Owner, 05 Deploy는 Release Manager, 06 Maintain은 Service Owner.
 
 | 단계 | 입력 | 출력 |
 | --- | --- | --- |
-| 00 setup | 원본 Linear 티켓 | Linear 하위 이슈 6개, `runner/.state/<key>.gates.json` |
 | 01 Plan (`sdlc-intent`) | Linear 티켓 | `docs/intent/<key>.md` |
 | 02 Design (`sdlc-spec`) | intent.md | `docs/spec/<key>.md` |
 | 03 Build — 계획 (`sdlc-plan`) | spec.md | `docs/plan/<key>.md`. 코드는 건드리지 않는다 |
@@ -211,9 +211,10 @@ bash AI_SDLC/todo-app/ops/detect.sh --self-check
 
 ## 3. Slack으로 흐름 보기
 
-진행 상황을 보여주는 화면은 두 곳뿐이다 — **Linear 원 티켓 아래 게이트 하위 이슈 6개**(00 Setup이
-만든다. 카드마다 승인자 역할과 상태가 그대로 보인다)와, 러너의 **Slack 봇**이 켜져 있다면 그 티켓의
-**Slack 스레드**(알림, 단계 진행 줄, 게이트 메시지와 승인/반려 버튼이 실시간으로 올라온다).
+진행 상황을 보여주는 화면은 두 곳뿐이다 — **Linear 원 티켓 아래 게이트 카드**(각 단계가 끝날 때마다
+러너가 그 단계의 카드를 하나씩 만든다. 카드마다 승인자 역할과 상태가 그대로 보인다)와, 러너의
+**Slack 봇**이 켜져 있다면 그 티켓의 **Slack 스레드**(알림, 단계 진행 줄, 게이트 메시지와 승인/반려
+버튼이 실시간으로 올라온다 — 진행 상황은 전부 이 스레드 안에만 남고 채널에는 새 티켓 알림만 간다).
 
 ```bash
 curl -s localhost:3939/health   # {"status":"ok"} 나오면 러너가 떠 있는 것
@@ -291,10 +292,10 @@ todo-app은 장애 감지부터 티켓 생성까지 한 앱에서 보여준다.
 `AI_SDLC/docs/demo-scenario.md`에 8구간 시간대별 대본이 있다. 준비 체크리스트, 대사, 실패 대비, Q&A 7문항 포함.
 클라이맥스는 중복 제목 500이 모니터 3σ 감지 → Claude 진단 → Linear 티켓으로 이어지고, 러너가 그 티켓을 받아 04단계 e2e가 버그를 잡고 고치는 지점이다.
 
-시연의 눈에 보이는 축은 이제 여섯 장의 Linear 카드다. 티켓 하나가 들어오면 `00-setup`이 승인 게이트
-하위 이슈 6개를 만들고, 각 단계가 끝날 때마다 담당자가 그 카드를 Done(승인) 또는 Canceled(반려)로
-옮기는 것 자체가 파이프라인이 실제로 사람 손을 거쳐 진행되고 있다는 증거가 된다. 관객에게는 이 여섯
-장이 하나씩 옮겨지는 걸 보여주는 게 핵심이다.
+시연의 눈에 보이는 축은 Linear 게이트 카드다. 미리 깔아 두는 여섯 장이 아니라, 단계가 끝날 때마다
+러너가 그 단계의 카드 하나를 만들어 올리고, 담당자가 그 카드를 Done(승인) 또는 Canceled(반려)로
+옮기는 것 자체가 파이프라인이 실제로 사람 손을 거쳐 진행되고 있다는 증거가 된다. 관객에게는 카드가
+한 장씩 새로 생기고 옮겨지는 걸 보여주는 게 핵심이다.
 
 ---
 
@@ -310,7 +311,7 @@ export interface TicketSource {
   parse(rawBody): Ticket | null;                          // 이벤트 → 공통 Ticket, 관심 없으면 null
   createTicket(t: NewTicket): Promise<Ticket>;
   comment(ticketId: string, body: string): Promise<void>;
-  createSubIssue(parentId: string, t: NewTicket): Promise<Ticket>;  // 00-setup의 게이트 하위 이슈 생성
+  createSubIssue(parentId: string, t: NewTicket): Promise<Ticket>;  // 단계가 끝날 때마다 그 단계의 게이트 하위 이슈 생성
   getStateType(issueId: string): Promise<StateType>;                // 게이트 폴링이 읽는 현재 상태
   listComments(issueId: string): Promise<IssueComment[]>;           // 반려 사유 코멘트 읽기
 }
@@ -335,7 +336,7 @@ export interface TicketSource {
 | 러너가 즉시 종료 | 필수 환경변수(`LINEAR_API_KEY`, webhook 모드면 `LINEAR_WEBHOOK_SECRET`, Slack을 쓴다면 `SLACK_BOT_TOKEN`/`SLACK_APP_TOKEN`)가 셸에 있는지, `sdlc.config.json`의 `linearTeamId`가 `REPLACE_WITH_LINEAR_TEAM_ID` 그대로 남아있지 않은지 |
 | webhook이 401 | Linear 설정의 시크릿과 `LINEAR_WEBHOOK_SECRET`이 같은지 |
 | 스킬/훅이 하나도 안 붙음 | `.claude/settings.json`의 마켓플레이스 `source.source`가 `"directory"`인지(`"local"`은 동작하지 않는다), `path`가 절대 경로가 아니라 프로젝트 기준 **상대 경로**인지 확인. 실패해도 에러가 안 뜬다. 확인: `cd AI_SDLC/todo-app && claude -p "네가 쓸 수 있는 sdlc-* 스킬 이름만 한 줄씩 출력해라." < /dev/null` — 9개(스킬 7 + 커맨드 2, `/sdlc-init`은 별도)가 나와야 정상, 안 나오면 `path`부터 의심 |
-| `00-setup`이 게이트 맵을 못 만듦(`no approval-gate map` 에러로 파이프라인 중단) | Linear MCP가 파이프라인을 돌리는 `claude` 세션에 인증되어 있는지 확인 — `LINEAR_API_KEY` 환경변수와는 별개의 인증이다. 리허설만 필요하면 `SDLC_AUTO_APPROVE=1`로 우회 |
+| 게이트 카드를 못 만들어 파이프라인이 중단됨 | 러너가 `LINEAR_API_KEY`로 Linear API를 못 부른 것이다(키 누락·권한 부족·`linearTeamId` 오타) — Linear MCP 인증과는 무관하다. 리허설만 필요하면 `SDLC_AUTO_APPROVE=1`로 우회 |
 | 게이트가 계속 대기 상태로 멈춤 | 담당자가 하위 이슈를 Done/Canceled로 안 옮기면 `gateTimeoutMs`(기본 30분) 뒤 타임아웃으로 처리되고 그 단계에서 멈춘다. 카드를 옮기거나 `gateTimeoutMs`를 늘린다 |
 | e2e가 아무것도 안 뱉음 | `cliLog`는 stdout이 아니라 **stderr**로 출력한다. `2>&1` 병합했는지 |
 | ego-lite가 "Please complete the onboarding process first" | 앱을 한 번 실행해 GUI 온보딩을 마쳐야 한다. 확인: `printf 'cliLog("ok")\n' \| ego-browser nodejs 2>&1` |

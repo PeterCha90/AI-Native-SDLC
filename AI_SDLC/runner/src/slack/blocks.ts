@@ -29,11 +29,10 @@ export interface ActionValue {
 
 /**
  * Maps a runner stage/gate id (e.g. "01-intent", "04-test-loop", "gate:03-build")
- * onto the fixed 7-column pipeline label the design shows in Slack and Linear.
+ * onto the fixed 6-column pipeline label the design shows in Slack and Linear.
  * Unknown ids are returned unchanged so a future stage never renders as "undefined".
  */
 const COLUMN_LABELS: Record<string, string> = {
-  "00": "00 Setup",
   "01": "01 Plan",
   "02": "02 Design",
   "03": "03 Build",
@@ -52,6 +51,24 @@ export function stageLabel(stage: string): string {
 /** Slack section blocks cap `text` at 3000 chars; leave headroom for the truncation marker. */
 function truncate(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+/** Slack's `markdown` block type caps `text` at ~12,000 chars; stay comfortably under that. */
+const MARKDOWN_BLOCK_MAX = 11_000;
+const TRUNCATION_MARKER = "\n\n_(문서가 길어 앞부분만 표시했습니다 — 전체는 Linear 카드에서 확인해 주세요)_";
+
+/**
+ * Truncates gate `content` (a file's full markdown, or a stage result summary) for the Slack
+ * `markdown` block, cutting at the last line boundary at or before `max` so a line is never split
+ * mid-sentence, then appending a marker that points the reader at the Linear card for the rest.
+ * Unlike `truncate`/`escapeMrkdwn`, this content is standard Markdown passed through verbatim —
+ * it must never be run through the mrkdwn escaper, which would corrupt real Markdown syntax.
+ */
+function truncateMarkdown(text: string, max: number = MARKDOWN_BLOCK_MAX): string {
+  if (text.length <= max) return text;
+  const cut = text.lastIndexOf("\n", max);
+  const body = cut > 0 ? text.slice(0, cut) : text.slice(0, max);
+  return `${body}${TRUNCATION_MARKER}`;
 }
 
 /**
@@ -149,7 +166,6 @@ function formatDuration(ms: number): string {
  * produce ungrammatical particles for exactly those two labels.
  */
 const STAGE_PARTICLES: Record<string, { obj: string; subj: string }> = {
-  "00 Setup": { obj: "을", subj: "이" },
   "01 Plan": { obj: "을", subj: "이" },
   "02 Design": { obj: "을", subj: "이" },
   "03 Build": { obj: "를", subj: "가" },
@@ -189,6 +205,10 @@ export function gateMessage(g: {
   roleGroupId?: string;
   roleUserIds?: string[];
   summary: string;
+  /** Full artifact/result content (file body, test results, PR info, detection output, ...), rendered verbatim as standard Markdown. Waiting state only — ignored otherwise. */
+  content?: string;
+  /** Short stage-specific instruction shown under the content, e.g. "'정책 충돌' 항목을 확인해 주세요". Waiting state only. */
+  hint?: string;
   gateUrl: string;
   state: "waiting" | "approved" | "rejected" | "timeout";
   by?: string;
@@ -219,11 +239,27 @@ export function gateMessage(g: {
       break;
   }
 
-  const blocks: unknown[] = [
-    section(headerText),
-    section(truncate(escapeMrkdwn(g.summary), 2900)),
-    context(`<${g.gateUrl}|Linear에서 보기>`),
-  ];
+  const blocks: unknown[] = [section(headerText)];
+
+  // When the caller supplies `content` (always true from the real pipeline — see pipeline.ts
+  // `gate()` — but optional so a caller/test that only has a plain `summary` keeps working), the
+  // approver reads the actual artifact/result right in Slack: a `markdown` block renders it as
+  // standard Markdown (NOT mrkdwn — never run through `escapeMrkdwn`, which would corrupt real
+  // Markdown syntax), followed by the short instruction line. Otherwise fall back to the old
+  // plain-text summary section.
+  if (g.state === "waiting" && g.content !== undefined) {
+    blocks.push({ type: "markdown", text: truncateMarkdown(g.content) });
+    const hintLine = g.hint ? ` ${escapeMrkdwn(g.hint)}` : "";
+    blocks.push(section(`검토하신 뒤 승인 또는 반려해 주세요.${hintLine}`));
+  } else {
+    blocks.push(section(truncate(escapeMrkdwn(g.summary), 2900)));
+  }
+
+  // An empty/missing gateUrl (a best-effort lookup that failed, or a caller that never had one)
+  // must never render as a broken "<|Linear에서 보기>" link — omit the line entirely instead.
+  if (g.gateUrl) {
+    blocks.push(context(`<${g.gateUrl}|Linear에서 보기>`));
+  }
 
   if (g.state === "waiting") {
     const value: ActionValue = { key: g.key, ticketId: g.ticketId, stage: g.stage };

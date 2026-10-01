@@ -4,9 +4,10 @@
 
 ## 한눈에 보기
 
+각 단계 게이트의 Linear 하위 이슈는 **미리 6개를 만들어 두지 않는다** — 그 단계가 끝나는 순간 러너가 어댑터로 하나만 만든다(0 setup 단계는 없다). 자세한 내용은 "승인 게이트 — 단계마다 하나씩 생성"을 본다.
+
 | 단계 | 승인 역할 | skill | hook | 그 밖의 설정 | 산출물 |
 | --- | --- | --- | --- | --- | --- |
-| 00 setup | — | — | — | Linear MCP | `runner/.state/<key>.gates.json`, Linear 하위 이슈 6개 |
 | 01 Plan | Product Owner | `sdlc-intent` | — | — | `docs/intent/<key>.md` |
 | 02 Design | Product Owner | `sdlc-spec` | — | — | `docs/spec/<key>.md` |
 | 03 Build | Engineer | `sdlc-plan` | `guard-protected-paths` · `block-secrets` · `format-lint` · `plan-drift` | `todo-app/.claude/CLAUDE.md`(없으면 `/sdlc-init`이 만든다) | `docs/plan/<key>.md`, 코드 diff |
@@ -18,18 +19,18 @@
 
 ## 단계별 상세
 
-### 00 setup — Linear에 승인 파이프라인을 만든다
+### 승인 게이트 — 단계마다 하나씩 생성
 
-티켓이 들어오면 가장 먼저 `claude -p`가 **Linear MCP**로 원 티켓 아래 하위 이슈 6개를 만든다. 하나가 게이트 하나다.
+각 단계가 끝나는 바로 그 순간, 러너가 어댑터의 `createSubIssue()`로 원 티켓 아래에 그 단계의 게이트 하위 이슈를 **하나만** 만든다. 6개를 미리 만들어 두는 "0 setup" 같은 단계는 없다 — 파이프라인이 끝까지 가면 트리는 결국 아래처럼 채워지지만, 중간 시점에는 그때까지 지난 단계 수만큼만 보인다.
 
 ```
 LIN-42  빈 제목 할 일이 저장됨              ← 사람이 만든 원 티켓
-├─ [gate] 01-plan — 승인자: Product Owner
-├─ [gate] 02-design — 승인자: Product Owner
-├─ [gate] 03-build — 승인자: Engineer
-├─ [gate] 04-test — 승인자: Code Owner
-├─ [gate] 05-deploy — 승인자: Release Manager
-└─ [gate] 06-maintain — 승인자: Service Owner
+├─ [gate] 01-plan — 승인자: Product Owner      (01 intent 완료 직후 생성)
+├─ [gate] 02-design — 승인자: Product Owner    (02 spec 완료 직후 생성)
+├─ [gate] 03-build — 승인자: Engineer           (03 plan 완료 직후 생성)
+├─ [gate] 04-test — 승인자: Code Owner          (04 test 완료 직후 생성)
+├─ [gate] 05-deploy — 승인자: Release Manager   (PR 생성 성공 직후 생성)
+└─ [gate] 06-maintain — 승인자: Service Owner   (06 maintain 판정 직후 생성)
 ```
 
 승인 신호는 매직 문자열이 아니라 **Linear의 기본 상태 전이**다.
@@ -37,12 +38,12 @@ LIN-42  빈 제목 할 일이 저장됨              ← 사람이 만든 원 �
 | 하위 이슈 상태 | 러너 해석 |
 | --- | --- |
 | Done (`completed`) | 승인 — 다음 단계 진행 |
-| Canceled (`canceled`) | 반려 — 파이프라인 중단, 마지막 코멘트를 사유로 기록 |
+| Canceled (`canceled`) | 반려 — 01·02·03은 재작업 후 재대기, 04·05·06은 그 자리에서 중단, 마지막 코멘트를 사유로 기록 |
 | 그 외 | 대기 — 10초 간격 폴링, 상한 30분 |
 
-승인자는 "카드를 옮긴다" 외에 배울 게 없다. 게이트 매핑 파일이 없거나 깨졌으면 러너는 **큰 소리로 중단한다** — 게이트 없이 6단계가 도는 경로는 만들지 않았다.
+승인자는 "카드를 옮긴다" 외에 배울 게 없다. 재작업(§2.2, 01·02·03만)은 새 카드를 만들지 않고 같은 카드를 `unstarted`로 되돌려 재사용한다. `createSubIssue()` 호출 자체가 실패하면 러너는 **큰 소리로 중단한다**(가능하면 원 티켓에 코멘트) — 게이트 없이 그 단계가 도는 경로는 만들지 않았다. 게이트 매핑 파일(`runner/.state/<key>.gates.json`)이 존재하는데 깨져 있어도 마찬가지로 중단한다.
 
-**확인**: `cat runner/.state/<key>.gates.json`
+**확인**: `cat runner/.state/<key>.gates.json` — 아직 지나지 않은 단계는 키가 비어 있는 게 정상이다.
 
 ### 01 Plan — `sdlc-intent`
 

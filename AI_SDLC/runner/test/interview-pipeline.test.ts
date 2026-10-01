@@ -30,7 +30,8 @@ const git = (args: string[], cwd: string) => execFileSync("git", args, { cwd, st
  *    holding a string array); each invocation that would write that path consumes the next queued
  *    string, holding on the last one once the queue is exhausted.
  *  - still honors STUB_CLAUDE_FAIL_ON (substring of the prompt) to simulate a failed session, and
- *    still bootstraps docs/*.gates.json for 00-setup and generic docs/spec, docs/plan content.
+ *    still bootstraps generic docs/spec, docs/plan content. Gate sub-issues are created lazily
+ *    through the adapter (see `recordingSource.createSubIssue` below), never by an agent prompt.
  */
 const CLAUDE_STUB = `#!/usr/bin/env python3
 import os, re, sys, json
@@ -50,12 +51,6 @@ if os.environ.get("STUB_CLAUDE_FAIL_ON") and os.environ["STUB_CLAUDE_FAIL_ON"] i
     sys.exit(3)
 
 for path in re.findall(r"/[\\w./-]+\\.(?:md|json)", prompt):
-    if path.endswith(".gates.json"):
-        stages = ["01-plan","02-design","03-build","04-test","05-deploy","06-maintain"]
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w") as f:
-            json.dump({s: {"issueId": "uuid-" + s, "key": "GATE-" + s, "url": "http://x/" + s} for s in stages}, f)
-        continue
     if "/docs/intent/" in path:
         plan_path = os.environ.get("STUB_INTENT_PLAN")
         content = "# stub intent\\n\\n## 미해결 질문\\n없음\\n"
@@ -131,8 +126,12 @@ function recordingSource(states: Record<string, StateType[]>): Recorder {
     comment: async (id, body) => {
       comments.push({ id, body });
     },
-    createSubIssue: async () => {
-      throw new Error("00-setup creates sub-issues through the agent, not the adapter");
+    // Gates are created lazily, one at a time, through the adapter — not by an agent session.
+    // The fake issueId/key/url mirror what the pre-refactor 00-setup stub used to write into
+    // gates.json, so `states`'s "uuid-<stage>" keys (below) keep working unchanged.
+    createSubIssue: async (_parentId, t) => {
+      const stage = t.title.match(/\[gate\]\s+(\S+)/)?.[1] ?? "unknown";
+      return { id: `uuid-${stage}`, key: `GATE-${stage}`, title: t.title, body: t.body, labels: t.labels ?? [], url: `http://x/${stage}` };
     },
     getStateType: async (id) => {
       const seq = states[id] ?? ["completed"];

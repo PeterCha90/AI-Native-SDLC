@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile, mkdir, rename } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { StateType, TicketSource } from "./adapters/types.ts";
@@ -6,11 +6,12 @@ import type { StateType, TicketSource } from "./adapters/types.ts";
 /**
  * Human-in-the-loop approval gates.
  *
- * One pipeline stage = one Linear sub-issue = one gate. The 00-setup stage creates
- * those sub-issues through the Linear MCP connector and records the mapping; this
- * module is the deterministic half that blocks the runner until a human moves the
- * sub-issue. No model is involved in reading an approval — a gate verdict must never
- * be a judgement call.
+ * One pipeline stage = one Linear sub-issue = one gate. Sub-issues are created LAZILY by
+ * `pipeline.ts`, through the ticket-source adapter's `createSubIssue`, one at a time, right
+ * before the stage's own gate wait — never all six up front. This module is the deterministic
+ * half that blocks the runner until a human moves the sub-issue, plus the on-disk gate-map
+ * read/write helpers that make that lazy creation idempotent across restarts. No model is
+ * involved in reading an approval — a gate verdict must never be a judgement call.
  */
 
 export const STAGES = ["01-plan", "02-design", "03-build", "04-test", "05-deploy", "06-maintain"] as const;
@@ -24,7 +25,8 @@ export interface GateRef {
   url: string;
 }
 
-export type GateMap = Record<StageId, GateRef>;
+/** Entries are created one at a time, as each stage's gate opens — never all six up front. */
+export type GateMap = Partial<Record<StageId, GateRef>>;
 
 export type GateVerdict = "approved" | "rejected" | "pending";
 
@@ -46,7 +48,12 @@ export function gateMapPath(runnerDir: string, ticketKey: string): string {
   return join(runnerDir, ".state", `${ticketKey}.gates.json`);
 }
 
-/** Type guard for the on-disk shape, so a truncated or hand-edited file fails here and not mid-pipeline. */
+/**
+ * Type guard for the on-disk shape, so a truncated or hand-edited file fails here and not
+ * mid-pipeline. The map is now a PARTIAL one — a stage with no entry simply hasn't reached its
+ * gate yet — but any entry that IS present must still be well-formed, and the file itself must
+ * still be valid JSON. A corrupt file must fail loudly, never be read as "no gates yet".
+ */
 export function parseGateMap(raw: string): GateMap {
   let parsed: unknown;
   try {
@@ -58,11 +65,12 @@ export function parseGateMap(raw: string): GateMap {
     throw new Error("gate map must be a JSON object keyed by stage id");
   }
   const record = parsed as Record<string, unknown>;
-  const map = {} as GateMap;
+  const map: GateMap = {};
   for (const stage of STAGES) {
     const entry = record[stage];
+    if (entry === undefined) continue; // not yet created — valid for a partial map.
     if (typeof entry !== "object" || entry === null) {
-      throw new Error(`gate map is missing an entry for stage "${stage}"`);
+      throw new Error(`gate map entry for stage "${stage}" is malformed`);
     }
     const { issueId, key, url } = entry as Record<string, unknown>;
     if (typeof issueId !== "string" || !issueId) throw new Error(`gate map entry "${stage}" has no issueId`);
@@ -76,21 +84,29 @@ export function parseGateMap(raw: string): GateMap {
 }
 
 /**
- * Loads the stage→sub-issue mapping written by 00-setup.
+ * Loads the stage→sub-issue mapping built up incrementally as gates open.
  *
- * Throws if it's absent or malformed. That is deliberate: a missing gate map means
- * nobody is being asked to approve anything, and a pipeline that silently runs all
- * six stages unattended is exactly the failure this feature exists to prevent.
+ * A missing file is a normal "no gates created yet" start state — the pipeline creates them one
+ * at a time as it reaches each stage. A PRESENT but malformed/corrupt file still throws: that can
+ * only mean the file was hand-edited or truncated mid-write, and a pipeline that silently treats
+ * that as "no gates" and runs ungated is exactly the failure this feature exists to prevent.
  */
 export async function readGateMap(runnerDir: string, ticketKey: string): Promise<GateMap> {
   const path = gateMapPath(runnerDir, ticketKey);
-  if (!existsSync(path)) {
-    throw new Error(
-      `no approval-gate map at ${path} — the 00-setup stage did not create the Linear sub-issues. ` +
-        `Refusing to run the pipeline ungated. Check the Linear MCP connection, or set SDLC_AUTO_APPROVE=1 to rehearse without gates.`,
-    );
-  }
+  if (!existsSync(path)) return {};
   return parseGateMap(await readFile(path, "utf8"));
+}
+
+/**
+ * Writes the gate map back atomically (write to a temp file, then rename over the real path) so a
+ * crash mid-write can never leave `readGateMap` looking at truncated JSON on the next restart.
+ */
+export async function writeGateMap(runnerDir: string, ticketKey: string, map: GateMap): Promise<void> {
+  const path = gateMapPath(runnerDir, ticketKey);
+  await mkdir(join(runnerDir, ".state"), { recursive: true });
+  const tmpPath = `${path}.tmp-${process.pid}-${Date.now()}`;
+  await writeFile(tmpPath, JSON.stringify(map, null, 2));
+  await rename(tmpPath, path);
 }
 
 export interface AwaitApprovalOptions {

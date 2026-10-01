@@ -113,14 +113,19 @@ export async function runDoctor(d: DoctorDeps): Promise<Check[]> {
       : linearLine
         ? "claude mcp 또는 /mcp 로 Linear를 다시 연결해 주세요"
         : `${ADD_LINEAR_MCP_CMD} 를 실행한 뒤, Claude Code에서 /mcp 로 인증을 완료해 주세요`;
+  // Non-blocking: gate sub-issues now go through the Linear API (createSubIssue), not MCP, so the
+  // runner starts fine without it. Only 06 Maintain's follow-up-ticket step still prefers MCP, and
+  // it falls back to the API when MCP isn't connected — so a missing/failed connection here is a
+  // warning, never a reason to refuse to start.
   checks.push({
     name: "Linear MCP 연결",
     ok: linearConnected,
     detail:
-      linearLine ??
-      "claude mcp list에 linear가 보이지 않습니다 — 이 명령은 현재 폴더에서 보이는 서버만 표시하므로, 다른 폴더에서 local/project 범위로 추가했다면 여기에는 나타나지 않습니다.",
+      (linearLine ??
+        "claude mcp list에 linear가 보이지 않습니다 — 이 명령은 현재 폴더에서 보이는 서버만 표시하므로, 다른 폴더에서 local/project 범위로 추가했다면 여기에는 나타나지 않습니다.") +
+      " (06 Maintain의 후속 티켓 생성에 사용되며, 연결되지 않아도 API로 대체되어 동작합니다)",
     fix: linearConnected ? undefined : mcpFix,
-    blocking: !linearConnected,
+    blocking: false,
   });
 
   const slackConfigured = Boolean(d.config?.slack?.channelId);

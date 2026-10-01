@@ -93,8 +93,8 @@ Slack 사용자는 아무것도 설치하지 않는다. 러너를 띄운 컴퓨�
 | --- | --- |
 | Node 22 이상 | `node -v` |
 | Claude Code (`claude`) 로그인 | `claude auth status` |
-| Claude Code에 Linear MCP 연결 | `claude mcp list`에서 `linear … ✔ Connected` |
 | 작업시킬 git 저장소 | 러너가 티켓마다 worktree를 만든다 |
+| (선택) Claude Code에 Linear MCP 연결 | `claude mcp list`에서 `linear … ✔ Connected`. 없어도 시작은 막히지 않는다 — 06 Maintain의 후속 티켓 생성에서만 우선 쓰이고, 없으면 Linear API로 대체된다 |
 | Slack 앱 | `npx ai-sdlc-runner manifest --open`으로 만든다 |
 | Linear 계정 | 개인 API 키를 발급할 수 있어야 한다 |
 
@@ -153,7 +153,7 @@ npx ai-sdlc-runner start
 
 **모노레포 하위 폴더.** `init`을 하위 폴더에서 실행해 그 폴더를 대상으로 골랐다면(위 1단계), `start`·`doctor`·`config`는 그 폴더 아래 어느 하위 폴더에서 실행해도 위로 올라가며 설정을 찾는다 — 저장소 최상위에서만 동작한다고 가정하지 않아도 된다.
 
-`start`는 먼저 `doctor`와 같은 점검을 하고, 막히는 항목(❌)이 있으면 시작하지 않는다 — Node 22 미만, `claude` 미설치·미로그인, Linear MCP 미연결, 토큰 검증 실패. Linear MCP는 00 Setup이 게이트 하위 이슈를 만들 때 쓴다. `ego-browser`·템플릿 누락은 경고(⚠️)만 한다(git 저장소 여부는 `init`이 막는다).
+`start`는 먼저 `doctor`와 같은 점검을 하고, 막히는 항목(❌)이 있으면 시작하지 않는다 — Node 22 미만, `claude` 미설치·미로그인, 토큰 검증 실패. 게이트 하위 이슈는 Linear API로(어댑터의 `createSubIssue`) 각 단계가 끝날 때마다 하나씩 만들어지므로 Linear MCP는 시작을 막지 않는다 — `ego-browser`·템플릿 누락·Linear MCP 미연결은 경고(⚠️)만 한다(git 저장소 여부는 `init`이 막는다). Linear MCP는 06 Maintain이 후속 티켓을 만들 때 우선 쓰고, 연결돼 있지 않으면 API로 대체한다.
 
 ---
 
@@ -214,7 +214,7 @@ npx ai-sdlc-runner start
 | --- | --- |
 | 무엇이 문제인지 모르겠다 | `npx ai-sdlc-runner doctor` |
 | `start`가 "먼저 init" 을 출력한다 | 그 저장소에서 `init`을 실행하지 않았다. `--repo`로 다른 저장소를 가리키고 있지 않은지도 확인 |
-| `Linear MCP 연결` 이 실패로 나온다 | Claude Code에서 `/mcp`로 Linear를 다시 인증한다 |
+| `Linear MCP 연결` 이 경고(⚠️)로 나온다 | 시작을 막지는 않는다. 06 Maintain의 후속 티켓 생성에서만 쓰이므로, 그 기능이 필요하면 Claude Code에서 `/mcp`로 Linear를 다시 인증한다 |
 | `/sdlc` 를 치면 "앱이 응답하지 않음" | 러너가 꺼져 있다. `start`가 떠 있는지 확인 |
 | 봇이 채널에 없다고 나온다 | 채널에서 `/invite @AI-SDLC` 후 `init` 다시 실행 |
 | 04 Test e2e가 매번 실패하고 06이 티켓을 만든다 | `ego-browser`가 준비됐는지(`doctor`), `demoAppUrl`에 앱이 떠 있는지 확인 |
@@ -256,7 +256,7 @@ runner/
 │   ├── cli.ts               # npx 진입점
 │   ├── cli/                 # init · doctor · verify · 인자 파서
 │   ├── index.ts             # 서버, 대기열, Slack·감시 연결
-│   ├── pipeline.ts          # 00~06 단계, 인터뷰·재작업 루프
+│   ├── pipeline.ts          # 01~06 단계, 인터뷰·재작업 루프, 단계별 게이트 카드 생성
 │   ├── gate.ts              # Linear 카드 상태 → 승인/반려/대기
 │   ├── linear-watcher.ts    # 새 티켓 폴링
 │   ├── slack/               # Bolt 앱, 알림, 인터뷰, 역할 확인, 메시지

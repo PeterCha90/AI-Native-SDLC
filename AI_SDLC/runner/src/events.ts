@@ -10,7 +10,13 @@ export interface PipelineEvents {
   runStarted(meta: RunMeta): Promise<void>;
   stageStarted(key: string, stage: string): Promise<void>;
   stageFinished(key: string, stage: string, ok: boolean, durationMs: number, note?: string): Promise<void>;
-  gateWaiting(key: string, stage: StageId, role: string, gate: GateRef, summary: string): Promise<void>;
+  /**
+   * `summary` is the full text posted as the Linear comment (content + hint). `content`/`hint`
+   * are the same material split apart for a notifier that renders them separately — e.g. the
+   * Slack notifier puts `content` in its own markdown block and `hint` in a short line below it.
+   * Both are optional so a caller/test that only cares about `summary` keeps working unchanged.
+   */
+  gateWaiting(key: string, stage: StageId, role: string, gate: GateRef, summary: string, content?: string, hint?: string): Promise<void>;
   gateResolved(key: string, stage: StageId, approved: boolean, reason?: string): Promise<void>;
   followupCreated(key: string, followup: { key: string; url: string }): Promise<void>;
   runFinished(key: string, outcome: "done" | "aborted"): Promise<void>;
