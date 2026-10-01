@@ -22,6 +22,16 @@ export interface LinearWatcherOptions<T extends { id: string; createdAt: string 
   /** Injected for tests. Defaults to `() => new Date()`. */
   now?: () => Date;
   log?: (m: string) => void;
+  /**
+   * On the first poll only (no state file yet), also fetches issues created within the last
+   * `sinceMs` and hands each one `include` accepts to `onNew`, oldest first — catching up on
+   * tickets that existed before the watcher's very first start, which the plain
+   * cursor=now()-and-notify-nothing seeding would otherwise skip forever (see poll() below).
+   * Every fetched issue — included or not — is marked seen, and the cursor is advanced to
+   * cover them, so this catch-up window is never re-fetched by the next ordinary poll.
+   * Omitted entirely, behaviour is unchanged: first poll seeds cursor=now() and notifies nothing.
+   */
+  catchUp?: { sinceMs: number; include: (t: T) => boolean };
 }
 
 /**
@@ -40,6 +50,7 @@ export class LinearWatcher<T extends { id: string; createdAt: string }> {
   private readonly onNew: (t: T) => Promise<void>;
   private readonly now: () => Date;
   private readonly log: (m: string) => void;
+  private readonly catchUp?: { sinceMs: number; include: (t: T) => boolean };
 
   private timer: ReturnType<typeof setInterval> | null = null;
   private polling = false;
@@ -75,6 +86,7 @@ export class LinearWatcher<T extends { id: string; createdAt: string }> {
     this.onNew = o.onNew;
     this.now = o.now ?? (() => new Date());
     this.log = o.log ?? console.log;
+    this.catchUp = o.catchUp;
   }
 
   private async readState(): Promise<WatchState | null> {
@@ -112,9 +124,11 @@ export class LinearWatcher<T extends { id: string; createdAt: string }> {
    * Runs one poll cycle and returns the number of tickets successfully handed
    * to `onNew`.
    *
-   * No state file yet → this is the first run: the cursor is seeded to
-   * `now()` and nothing is fetched or notified, so a fresh watcher never
-   * floods `onNew` with every pre-existing ticket.
+   * No state file yet → this is the first run, handled by `firstPoll()`: without
+   * `catchUp` configured, the cursor is seeded to `now()` and nothing is fetched or
+   * notified, so a fresh watcher never floods `onNew` with every pre-existing ticket.
+   * With `catchUp`, a bounded window before `now()` is fetched once and run through
+   * `include()` instead.
    *
    * A fetch failure leaves the cursor untouched so the missed window is
    * retried on the next poll. An `onNew` failure is logged but the ticket is
@@ -124,8 +138,7 @@ export class LinearWatcher<T extends { id: string; createdAt: string }> {
   async poll(): Promise<number> {
     const state = await this.withLock(() => this.readState());
     if (state === null) {
-      await this.withLock(() => this.writeState({ cursor: this.now().toISOString(), seen: [] }));
-      return 0;
+      return this.firstPoll();
     }
 
     let issues: T[];
@@ -156,6 +169,71 @@ export class LinearWatcher<T extends { id: string; createdAt: string }> {
           notified++;
         } catch (err) {
           this.log(`[linear-watcher] onNew failed for ${t.id}, marking it seen to avoid re-notifying: ${(err as Error).message}`);
+        }
+      }
+
+      await this.writeState({ cursor, seen: nextSeen });
+      return notified;
+    });
+  }
+
+  /**
+   * Handles the very first poll (no state file yet).
+   *
+   * Without `catchUp`: seeds cursor=`now()`, fetches nothing, notifies nothing — the
+   * long-standing "never flood onNew with pre-existing tickets" behaviour.
+   *
+   * With `catchUp`: fetches `listRecentIssues(now - sinceMs)` once, runs `onNew` for every
+   * fetched issue `include()` accepts (oldest first), marks ALL fetched issues seen
+   * regardless of `include()`, and sets the cursor to cover both `now()` and the newest
+   * `createdAt` fetched — so the very next ordinary poll never re-fetches this window.
+   *
+   * A fetch failure here writes nothing at all (unlike the steady-state path, there's no
+   * cursor yet to "leave untouched"), so the next poll still sees no state file and retries
+   * catch-up from scratch rather than silently falling back to "skip everything before now".
+   */
+  private async firstPoll(): Promise<number> {
+    if (!this.catchUp) {
+      await this.withLock(() => this.writeState({ cursor: this.now().toISOString(), seen: [] }));
+      return 0;
+    }
+
+    const catchUp = this.catchUp;
+    const now = this.now();
+    const since = new Date(now.getTime() - catchUp.sinceMs).toISOString();
+
+    let issues: T[];
+    try {
+      issues = await this.listRecentIssues(since);
+    } catch (err) {
+      this.log(`[linear-watcher] catch-up fetch failed, will retry catch-up on next poll: ${(err as Error).message}`);
+      return 0;
+    }
+
+    return this.withLock(async () => {
+      // No state file existed when poll() checked, but a concurrent markSeen() could have
+      // created one while the fetch above was in flight (it runs outside the lock) — re-read
+      // here, same as the steady-state path, so that write is never lost.
+      const fresh = (await this.readState()) ?? { cursor: now.toISOString(), seen: [] };
+      const seen = new Set(fresh.seen);
+      const nextSeen = [...fresh.seen];
+      let cursor = fresh.cursor;
+      let notified = 0;
+
+      const sorted = [...issues].sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0));
+      for (const t of sorted) {
+        if (t.createdAt > cursor) cursor = t.createdAt;
+        if (seen.has(t.id)) continue;
+        seen.add(t.id);
+        nextSeen.push(t.id);
+        if (!catchUp.include(t)) continue;
+        try {
+          await this.onNew(t);
+          notified++;
+        } catch (err) {
+          this.log(
+            `[linear-watcher] onNew failed for ${t.id} during catch-up, marking it seen to avoid re-notifying: ${(err as Error).message}`,
+          );
         }
       }
 

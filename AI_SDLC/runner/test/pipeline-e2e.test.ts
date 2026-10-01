@@ -148,6 +148,7 @@ function makeConfig(repoPath: string, runnerDir: string): Config {
     linearPollIntervalMs: 30_000,
     interviewMaxRounds: 5,
     reworkMaxAttempts: 3,
+    catchUpHours: 24,
     slack: null,
   };
 }

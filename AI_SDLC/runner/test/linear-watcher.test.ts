@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LinearWatcher, type WatchState } from "../src/linear-watcher.ts";
@@ -283,6 +284,137 @@ test("markSeen() issued while poll() is awaiting a slow listRecentIssues is not 
     notified.map((n) => n.id),
     ["a"],
   );
+});
+
+test("catchUp: first poll notifies included issues oldest-first, marks all fetched seen, advances cursor, and excludes are not notified", async () => {
+  const statePath = await tempStatePath();
+  const fixedNow = new Date("2026-01-01T00:00:00.000Z");
+  const notified: FakeIssue[] = [];
+  let sinceSeen: string | null = null;
+
+  // Newest-first on purpose, to prove the watcher sorts oldest-first before notifying.
+  const issues = [issue("b", "2026-01-01T00:10:00.000Z"), issue("a", "2026-01-01T00:05:00.000Z"), issue("c", "2025-12-31T23:00:00.000Z")];
+
+  const watcher = new LinearWatcher<FakeIssue>({
+    listRecentIssues: async (since) => {
+      sinceSeen = since;
+      return issues;
+    },
+    statePath,
+    intervalMs: 1000,
+    onNew: async (t) => {
+      notified.push(t);
+    },
+    now: () => fixedNow,
+    catchUp: {
+      sinceMs: 24 * 60 * 60 * 1000,
+      include: (t) => t.id !== "c", // "c" stands in for "already ran" / "no label"
+    },
+  });
+
+  const count = await watcher.poll();
+
+  assert.equal(sinceSeen, new Date(fixedNow.getTime() - 24 * 60 * 60 * 1000).toISOString());
+  assert.equal(count, 2);
+  assert.deepEqual(
+    notified.map((n) => n.id),
+    ["a", "b"],
+    "included issues must be notified oldest-first",
+  );
+
+  const state = await readState(statePath);
+  assert.deepEqual(state.seen.sort(), ["a", "b", "c"], "excluded issue must still be marked seen");
+  assert.equal(state.cursor, "2026-01-01T00:10:00.000Z", "cursor must advance to the newest createdAt fetched");
+});
+
+test("catchUp: second poll does not re-notify any issue seen during the catch-up poll", async () => {
+  const statePath = await tempStatePath();
+  const fixedNow = new Date("2026-01-01T00:00:00.000Z");
+  const notified: FakeIssue[] = [];
+  const catchUpIssues = [issue("a", "2026-01-01T00:05:00.000Z"), issue("c", "2025-12-31T23:00:00.000Z")];
+
+  const watcher = new LinearWatcher<FakeIssue>({
+    listRecentIssues: async (since) => (since.startsWith("2025-12-31") ? catchUpIssues : []),
+    statePath,
+    intervalMs: 1000,
+    onNew: async (t) => {
+      notified.push(t);
+    },
+    now: () => fixedNow,
+    catchUp: {
+      sinceMs: 24 * 60 * 60 * 1000,
+      include: (t) => t.id !== "c",
+    },
+  });
+
+  await watcher.poll(); // catch-up poll
+  const second = await watcher.poll();
+
+  assert.equal(second, 0);
+  assert.deepEqual(
+    notified.map((n) => n.id),
+    ["a"],
+  );
+});
+
+test("catchUp: a fetch failure on the first poll writes no state, so the next poll retries catch-up from scratch", async () => {
+  const statePath = await tempStatePath();
+  const fixedNow = new Date("2026-01-01T00:00:00.000Z");
+  const notified: FakeIssue[] = [];
+  let shouldFail = true;
+  const issues = [issue("a", "2026-01-01T00:05:00.000Z")];
+
+  const watcher = new LinearWatcher<FakeIssue>({
+    listRecentIssues: async () => {
+      if (shouldFail) throw new Error("boom: linear API down");
+      return issues;
+    },
+    statePath,
+    intervalMs: 1000,
+    onNew: async (t) => {
+      notified.push(t);
+    },
+    now: () => fixedNow,
+    catchUp: { sinceMs: 24 * 60 * 60 * 1000, include: () => true },
+  });
+
+  const failed = await watcher.poll();
+  assert.equal(failed, 0);
+  assert.equal(existsSync(statePath), false, "no state file should be written on catch-up fetch failure");
+
+  shouldFail = false;
+  const recovered = await watcher.poll();
+  assert.equal(recovered, 1);
+  assert.deepEqual(notified.map((n) => n.id), ["a"]);
+});
+
+test("without catchUp configured, first poll still seeds cursor=now() and notifies nothing (unchanged)", async () => {
+  const statePath = await tempStatePath();
+  const fixedNow = new Date("2026-01-01T00:00:00.000Z");
+  let listCalls = 0;
+  const notified: FakeIssue[] = [];
+
+  const watcher = new LinearWatcher<FakeIssue>({
+    listRecentIssues: async () => {
+      listCalls++;
+      return [];
+    },
+    statePath,
+    intervalMs: 1000,
+    onNew: async (t) => {
+      notified.push(t);
+    },
+    now: () => fixedNow,
+  });
+
+  const count = await watcher.poll();
+
+  assert.equal(count, 0);
+  assert.equal(listCalls, 0);
+  assert.deepEqual(notified, []);
+  const state = await readState(statePath);
+  assert.equal(state.cursor, fixedNow.toISOString());
+  assert.deepEqual(state.seen, []);
 });
 
 test("stop() clears the timer so start()'d polling does not continue", async () => {

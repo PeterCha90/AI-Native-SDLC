@@ -50,6 +50,13 @@ export interface FileConfig {
   interviewMaxRounds?: number;
   /** Max rework attempts per gate (01/02/03) after a rejection before the pipeline stops. Default 3. */
   reworkMaxAttempts?: number;
+  /**
+   * How many hours back LinearWatcher's very first poll looks for already-created
+   * `autoTicketLabel` tickets it hasn't run yet, so one created before the runner's first
+   * start (e.g. by the 06 Maintain loop) still gets announced. 0 disables catch-up entirely.
+   * Default 24.
+   */
+  catchUpHours?: number;
   slack?: {
     channelId: string;
     startMode?: "button" | "auto";
@@ -94,6 +101,8 @@ export interface Config {
   interviewMaxRounds: number;
   /** Max rework attempts per gate (01/02/03) after a rejection before the pipeline stops. */
   reworkMaxAttempts: number;
+  /** See FileConfig.catchUpHours. 0 disables catch-up. */
+  catchUpHours: number;
   /**
    * Non-null only when both SLACK_BOT_TOKEN and SLACK_APP_TOKEN are set AND
    * sdlc.config.json has slack.channelId — all three are required to turn Slack on.
@@ -252,6 +261,7 @@ export function loadConfig(opts?: LoadConfigOptions | NodeJS.ProcessEnv): Config
     linearPollIntervalMs: file.linearPollIntervalMs ?? 30_000,
     interviewMaxRounds: file.interviewMaxRounds ?? 5,
     reworkMaxAttempts: file.reworkMaxAttempts ?? 3,
+    catchUpHours: file.catchUpHours ?? 24,
     slack,
   };
 

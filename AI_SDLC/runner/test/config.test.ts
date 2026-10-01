@@ -142,6 +142,20 @@ test("interviewMaxRounds and reworkMaxAttempts default to 5 and 3", async () => 
   assert.equal(config.reworkMaxAttempts, 3);
 });
 
+test("catchUpHours defaults to 24 and is overridable, including to 0 (disabled)", async () => {
+  const configPath1 = await writeFileConfig({ linearTeamId: "team-1" });
+  const config1 = loadConfig(baseEnv({ SDLC_CONFIG_PATH: configPath1 }));
+  assert.equal(config1.catchUpHours, 24);
+
+  const configPath2 = await writeFileConfig({ linearTeamId: "team-1", catchUpHours: 0 });
+  const config2 = loadConfig(baseEnv({ SDLC_CONFIG_PATH: configPath2 }));
+  assert.equal(config2.catchUpHours, 0);
+
+  const configPath3 = await writeFileConfig({ linearTeamId: "team-1", catchUpHours: 48 });
+  const config3 = loadConfig(baseEnv({ SDLC_CONFIG_PATH: configPath3 }));
+  assert.equal(config3.catchUpHours, 48);
+});
+
 test("interviewMaxRounds and reworkMaxAttempts are overridable from the config file", async () => {
   const configPath = await writeFileConfig({ linearTeamId: "team-1", interviewMaxRounds: 8, reworkMaxAttempts: 1 });
   const config = loadConfig(baseEnv({ SDLC_CONFIG_PATH: configPath }));

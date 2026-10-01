@@ -291,6 +291,8 @@ npx ai-sdlc-runner start
 | 단계 진행 | 티켓 스레드에 `⏳ 01 Plan 실행 중` → `✅ 01 Plan 완료 (4분)` |
 | 게이트 열림 | 스레드에 승인 역할 멘션 + 요약 + `[✅ 승인]` `[⛔ 반려]`, 채널에도 한 번 더 보임 |
 
+러너를 처음 켤 때 최근 24시간 안에 생긴 아직 실행되지 않은 `sdlc-auto` 티켓도 알립니다. 사람이 만든 티켓은 켠 뒤에 생긴 것만 알립니다.
+
 ### ④ 01 Plan 인터뷰
 
 01 Plan 초안에 `## 미해결 질문`이 남아 있으면(최대 `interviewMaxRounds`회, 기본 5) 러너가 게이트를 열기 전에 스레드에서 되묻는다.
@@ -418,6 +420,7 @@ Linear → Settings → API → Webhooks에서 `<터널 주소>/webhook/linear`�
 | `detectScript` / `detectMetric` | `ops/detect.sh` / `e2e_failure_rate` | 06 감지 스크립트와 판정 지표 |
 | `interviewMaxRounds` | `5` | 01 Plan 인터뷰 최대 왕복 횟수. 도달하면 `[이대로 진행]`과 같게 처리한다 |
 | `reworkMaxAttempts` | `3` | `01-plan`·`02-design`·`03-build` 게이트 반려 시 그 단계를 다시 돌리는 최대 횟수. 도달하면 파이프라인을 중단한다 |
+| `catchUpHours` | `24` | 러너를 처음 켤 때, 그 이전 N시간 안에 생긴 아직 실행되지 않은 `sdlc-auto` 티켓까지 알리는 범위. `0`이면 끈다 |
 
 환경변수:
 
