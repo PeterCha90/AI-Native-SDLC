@@ -64,7 +64,7 @@ export function createSlackNotifier(
   }
 
   async function markStarted(key: string, by: string): Promise<void> {
-    const text = `▶ 시작함 (by <@${by}>)`;
+    const text = `▶ 시작했습니다 (by <@${by}>)`;
     const rec = await readThread(stateDir, key);
     if (rec) {
       await client.chat.update({ channel: rec.channel, ts: rec.threadTs, ...simpleMsg(text) });
@@ -141,7 +141,7 @@ export function createSlackNotifier(
         ticketId: rec.ticketId,
         stage,
         role: "",
-        summary: "(Linear에서 처리됨)",
+        summary: "(Linear에서 처리되었습니다)",
         gateUrl: "",
         state: approved ? "approved" : "rejected",
         by: approved ? "Linear" : undefined,
@@ -160,7 +160,7 @@ export function createSlackNotifier(
         ticketId: rec.ticketId,
         stage,
         role: "",
-        summary: "(재작업을 준비한다)",
+        summary: "(재작업을 준비하고 있습니다)",
         gateUrl: "",
         state: "rejected",
         reason,
@@ -171,7 +171,7 @@ export function createSlackNotifier(
 
     async interviewAnswered(key: string, round: number, answerCount: number): Promise<void> {
       const rec = await ensureThread(key, `🆕 ${key}`);
-      const text = `📝 01 Plan 인터뷰 답변 ${answerCount}개 반영 (round ${round}) — intent.md를 다시 쓴다`;
+      const text = `📝 01 Plan 인터뷰 답변 ${answerCount}개를 반영했습니다 (round ${round}) — intent.md를 다시 작성합니다`;
       await client.chat.postMessage({ channel: rec.channel, thread_ts: rec.threadTs, ...simpleMsg(text) });
     },
 

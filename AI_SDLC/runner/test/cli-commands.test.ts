@@ -162,7 +162,7 @@ test("chooseInitTarget: offers the current subfolder (default) and the repo top,
 
   assert.equal(result, "/repo");
   assert.equal(selectCalls.length, 1);
-  assert.equal(selectCalls[0].message, "대상 폴더를 고른다");
+  assert.equal(selectCalls[0].message, "대상 폴더를 선택해 주세요");
   assert.deepEqual(
     selectCalls[0].options.map((o: any) => o.value),
     [join("/repo", "apps", "web"), "/repo"],
@@ -226,7 +226,7 @@ test("interactive `init` from a subfolder offers the target-folder select; choos
   const toplevel = realpathSync(root);
 
   const prompter = scriptedPrompter([
-    toplevel, // "대상 폴더를 고른다" -> choose the repo top
+    toplevel, // "대상 폴더를 선택해 주세요" -> choose the repo top
     "have",
     "xoxb-good",
     "xapp-good",
@@ -257,7 +257,7 @@ test("interactive `init` from a subfolder: choosing the current folder (default)
   const target = realpathSync(webDir);
 
   const prompter = scriptedPrompter([
-    target, // "대상 폴더를 고른다" -> choose the current (sub)folder
+    target, // "대상 폴더를 선택해 주세요" -> choose the current (sub)folder
     "have",
     "xoxb-good",
     "xapp-good",

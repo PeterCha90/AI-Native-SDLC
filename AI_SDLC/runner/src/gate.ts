@@ -165,7 +165,7 @@ export async function awaitApproval(opts: AwaitApprovalOptions): Promise<Approva
     await sleep(opts.pollIntervalMs);
   }
 
-  const reason = `승인 대기 시간(${Math.round(opts.timeoutMs / 1000)}s)을 초과했다. ${opts.gate.key} 를 사람이 처리해야 한다.`;
+  const reason = `승인 대기 시간(${Math.round(opts.timeoutMs / 1000)}s)을 초과했습니다. ${opts.gate.key} 를 사람이 처리해야 합니다.`;
   log(`[gate:${opts.stage}] ${reason}`);
   return { approved: false, reason, autoApproved: false };
 }

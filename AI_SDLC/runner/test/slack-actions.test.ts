@@ -129,7 +129,7 @@ test("handleGateAction: pending gate, approve -> comments then setStateType(gate
   assert.equal(source.calls[setStateIdx], "setStateType:gate-uuid:completed");
 });
 
-test("handleGateAction: already completed -> ok:false '이미 승인됨', setStateType never called", async () => {
+test("handleGateAction: already completed -> ok:false '이미 승인되었습니다', setStateType never called", async () => {
   const runnerDir = await tmpRunnerDir();
   await writeGateMap(runnerDir, "ENG-1");
   const source = fakeSource("completed");
@@ -137,11 +137,11 @@ test("handleGateAction: already completed -> ok:false '이미 승인됨', setSta
   const result = await handleGateAction({ userId: "U1", key: "ENG-1", stage: "01-plan", approved: true }, deps(runnerDir, source));
 
   assert.equal(result.ok, false);
-  if (!result.ok) assert.match(result.message, /이미 승인됨/);
+  if (!result.ok) assert.match(result.message, /이미 승인되었습니다/);
   assert.equal(source.calls.filter((c) => c.startsWith("setStateType")).length, 0);
 });
 
-test("handleGateAction: already canceled -> ok:false '이미 반려됨'", async () => {
+test("handleGateAction: already canceled -> ok:false '이미 반려되었습니다'", async () => {
   const runnerDir = await tmpRunnerDir();
   await writeGateMap(runnerDir, "ENG-1");
   const source = fakeSource("canceled");
@@ -149,7 +149,7 @@ test("handleGateAction: already canceled -> ok:false '이미 반려됨'", async 
   const result = await handleGateAction({ userId: "U1", key: "ENG-1", stage: "01-plan", approved: true }, deps(runnerDir, source));
 
   assert.equal(result.ok, false);
-  if (!result.ok) assert.match(result.message, /이미 반려됨/);
+  if (!result.ok) assert.match(result.message, /이미 반려되었습니다/);
 });
 
 test("handleGateAction: reject -> reason comment happens before setStateType(…, canceled)", async () => {

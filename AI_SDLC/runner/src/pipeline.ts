@@ -255,10 +255,10 @@ export async function prepareWorkDir(
 function artifactWarning(result: StageResult, artifactPath: string): string {
   if (!result.ok) {
     const why = result.error ?? (result.timedOut ? "타임아웃" : `exit ${result.exitCode}`);
-    return `> ⚠️ 이 단계의 claude 세션이 실패했다 (${why}). 아래 산출물은 없거나 불완전할 수 있다.\n\n`;
+    return `> ⚠️ 이 단계의 claude 세션이 실패했습니다 (${why}). 아래 산출물은 없거나 불완전할 수 있습니다.\n\n`;
   }
   if (!existsSync(artifactPath)) {
-    return `> ⚠️ 세션은 정상 종료했지만 \`${artifactPath}\` 가 생성되지 않았다.\n\n`;
+    return `> ⚠️ 세션은 정상 종료했지만 \`${artifactPath}\` 가 생성되지 않았습니다.\n\n`;
   }
   return "";
 }
@@ -513,7 +513,7 @@ export async function runPipeline(
   const plan01 = await gateWithRework(
     "01-plan",
     docsIntent,
-    (latest) => `${artifactWarning(latest, docsIntent)}01 Plan 산출물: \`${docsIntent}\`\n\n문제/원하는 결과/영향 범위/제약/미해결 질문이 티켓 의도와 맞는지 확인해 달라.`,
+    (latest) => `${artifactWarning(latest, docsIntent)}01 Plan 산출물: \`${docsIntent}\`\n\n문제/원하는 결과/영향 범위/제약/미해결 질문이 티켓 의도와 맞는지 확인해 주세요.`,
     afterInitialInterview,
   );
   if (!plan01.approved) {
@@ -536,7 +536,7 @@ export async function runPipeline(
   const design02 = await gateWithRework(
     "02-design",
     docsSpec,
-    (latest) => `${artifactWarning(latest, docsSpec)}02 Design 산출물: \`${docsSpec}\`\n\n"정책 충돌" 섹션을 각 정책 담당자와 정리한 뒤 진행 여부를 결정해 달라.`,
+    (latest) => `${artifactWarning(latest, docsSpec)}02 Design 산출물: \`${docsSpec}\`\n\n"정책 충돌" 섹션을 각 정책 담당자와 정리한 뒤 진행 여부를 결정해 주세요.`,
     { sessionId: specResult.sessionId, latest: specResult },
   );
   if (!design02.approved) {
@@ -559,7 +559,7 @@ export async function runPipeline(
   const build03 = await gateWithRework(
     "03-build",
     docsPlan,
-    (latest) => `${artifactWarning(latest, docsPlan)}03 Build 착수 계획: \`${docsPlan}\`\n\n변경할 파일 목록과 "무엇이 깨질 수 있는가"를 심문하고, 이대로 구현해도 되는지 판단해 달라.\n승인 후에만 에이전트가 코드를 편집한다.`,
+    (latest) => `${artifactWarning(latest, docsPlan)}03 Build 착수 계획: \`${docsPlan}\`\n\n변경할 파일 목록과 "무엇이 깨질 수 있는가"를 심문하고, 이대로 구현해도 되는지 판단해 주세요.\n승인 후에만 에이전트가 코드를 편집합니다.`,
     { sessionId: planResult.sessionId, latest: planResult },
     // This gate approves the *plan* (docsPlan, written by the 03-plan stage) before any code is
     // touched — the rework session edits that same plan document, so it's "03-plan-rework", not
@@ -618,7 +618,7 @@ export async function runPipeline(
   // below, records why, and — if the detection tier warrants it — opens the follow-up ticket that
   // closes the loop. Gates 01–03 are different: rejecting those means the work itself was wrong,
   // so the pipeline returns and there is nothing to maintain.
-  const testApproved = (await gate("04-test", `${testSummary}\n\n기계적 증거는 위에 붙였다. 의도와 리스크 관점에서 판단해 달라.`)).approved;
+  const testApproved = (await gate("04-test", `${testSummary}\n\n기계적 증거는 위에 붙였습니다. 의도와 리스크 관점에서 판단해 주세요.`)).approved;
 
   // ── 05 Deploy ───────────────────────────────────────────────────────────────
   let deployOk = false;
@@ -639,7 +639,7 @@ export async function runPipeline(
     // The release manager needs to know whether a review actually happened. An unreported failed
     // review session looks identical to a clean one at the gate.
     if (!reviewResult.ok) {
-      reviewNote = `> ⚠️ sdlc-review 세션이 실패했다 (${reviewResult.error ?? (reviewResult.timedOut ? "타임아웃" : `exit ${reviewResult.exitCode}`)}). Bugs/Security/Compliance 리뷰 결과가 없다.\n\n`;
+      reviewNote = `> ⚠️ sdlc-review 세션이 실패했습니다 (${reviewResult.error ?? (reviewResult.timedOut ? "타임아웃" : `exit ${reviewResult.exitCode}`)}). Bugs/Security/Compliance 리뷰 결과가 없습니다.\n\n`;
     }
     if (branch) {
       const pr = await runCommand("gh", ["pr", "create", "--fill", "--head", branch], workDir);
@@ -668,7 +668,7 @@ export async function runPipeline(
     ? (
         await gate(
           "05-deploy",
-          `${reviewNote}05 Deploy: PR 준비 완료.\n\n\`\`\`\n${deployOutput.slice(0, 1200)}\n\`\`\`\n\n프로덕션 게이트는 \`RELEASE_APPROVED=1\` 없이는 훅이 차단한다. 릴리스를 승인할지 판단해 달라.`,
+          `${reviewNote}05 Deploy: PR 준비 완료.\n\n\`\`\`\n${deployOutput.slice(0, 1200)}\n\`\`\`\n\n프로덕션 게이트는 \`RELEASE_APPROVED=1\` 없이는 훅이 차단합니다. 릴리스를 승인할지 판단해 주세요.`,
         )
       ).approved
     : false;
@@ -695,7 +695,7 @@ export async function runPipeline(
     ev,
   );
 
-  await gate("06-maintain", `06 Maintain 판정이 끝났다. 감지 결과와 후속 티켓 생성 여부를 확인하고 트리아지해 달라 (지금 고칠지, 일정에 넣을지, 기각할지).`);
+  await gate("06-maintain", `06 Maintain 판정이 끝났습니다. 감지 결과와 후속 티켓 생성 여부를 확인하고 트리아지해 주세요 (지금 고칠지, 일정에 넣을지, 기각할지).`);
 
   // The pipeline always finishes normally from here — unlike the 01/02/03 gates, nothing after
   // this point returns early, so "done" is unconditional regardless of how 06's gate resolved.
@@ -773,7 +773,7 @@ async function runMaintain(
   if (!shouldCreateFollowupTicket(ticket, config.autoTicketLabel, config.maxAutoTicketDepth)) {
     await source.comment(
       ticket.id,
-      `AI-SDLC 파이프라인이 3σ 이탈을 감지했지만 자동 티켓 깊이 상한(${config.maxAutoTicketDepth})에 도달해 새 티켓을 만들지 않는다. 사람이 처리해야 한다.\n\n${input.summary}`,
+      `AI-SDLC 파이프라인이 3σ 이탈을 감지했지만 자동 티켓 깊이 상한(${config.maxAutoTicketDepth})에 도달해 새 티켓을 만들지 않습니다. 사람이 처리해야 합니다.\n\n${input.summary}`,
     );
     await appendStateLog(runnerDir, key, {
       stage: "06-maintain",
@@ -818,7 +818,7 @@ async function runMaintain(
     try {
       const created = await source.createTicket({
         title: `[auto] fix: ${ticket.title}`,
-        body: `AI-SDLC 파이프라인이 ${config.detectMetric} 3σ 이탈을 감지했다. 원인 티켓: ${ticket.url}\n\nsdlc-depth: ${depth}\n\n${detectOutput}\n\n${input.summary}`,
+        body: `AI-SDLC 파이프라인이 ${config.detectMetric} 3σ 이탈을 감지했습니다. 원인 티켓: ${ticket.url}\n\nsdlc-depth: ${depth}\n\n${detectOutput}\n\n${input.summary}`,
         labels: [config.autoTicketLabel],
       });
       note = `tier=3 — sdlc-maintain 세션 실패(${why}). 러너가 대신 후속 티켓 ${created.key} (${created.url}) 을 생성했다.`;

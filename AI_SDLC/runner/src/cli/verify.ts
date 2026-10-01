@@ -31,9 +31,9 @@ export function checkTokenPrefix(kind: TokenKind, token: string): string | null 
 
   const actualKind = detectKind(trimmed);
   if (actualKind && actualKind !== kind) {
-    return `이 값은 ${LABELS[actualKind]}처럼 보인다. ${LABELS[kind]}를 입력해야 한다.`;
+    return `이 값은 ${LABELS[actualKind]}처럼 보입니다. ${LABELS[kind]}를 입력해 주세요.`;
   }
-  return `${LABELS[kind]}는 "${PREFIXES[kind]}"로 시작해야 한다.`;
+  return `${LABELS[kind]}는 "${PREFIXES[kind]}"로 시작해야 합니다.`;
 }
 
 /** True when the input is (or looks like) a URL rather than a bare id — used to give a clearer error when link-parsing fails. */
@@ -73,7 +73,7 @@ export interface Verifier {
 }
 
 /** Slack Web API "AI-SDLC connected" test message, sent to the chosen channel during `init`. */
-export const SLACK_TEST_MESSAGE = "✅ AI-SDLC 연결 확인 — 이 채널에서 티켓 알림과 승인을 받는다.";
+export const SLACK_TEST_MESSAGE = "✅ AI-SDLC 연결 확인 — 이 채널에서 티켓 알림과 승인을 받습니다.";
 
 /** `fetch` itself rejected (offline, DNS, TLS, …) — never thrown further up. */
 export const ERROR_NETWORK = "network_error";
@@ -81,8 +81,8 @@ export const ERROR_NETWORK = "network_error";
 export const ERROR_INVALID_RESPONSE = "invalid_response";
 
 const ERROR_MESSAGES: Record<string, string> = {
-  [ERROR_NETWORK]: "네트워크에 연결하지 못했다 — 인터넷 연결을 확인하고 다시 시도한다.",
-  [ERROR_INVALID_RESPONSE]: "서버 응답을 해석하지 못했다 — 잠시 후 다시 시도한다.",
+  [ERROR_NETWORK]: "네트워크에 연결하지 못했습니다 — 인터넷 연결을 확인하고 다시 시도해 주세요.",
+  [ERROR_INVALID_RESPONSE]: "서버 응답을 해석하지 못했습니다 — 잠시 후 다시 시도해 주세요.",
 };
 
 /** Maps a verifier error code to a Korean, actionable message; unknown codes pass through as-is. */
@@ -153,12 +153,12 @@ export function createVerifier(fetchImpl: typeof fetch = fetch, log: (message: s
     async userGroups(botToken) {
       const result = await slackApi("usergroups.list", botToken);
       if (!result.ok) {
-        log(`Slack 사용자 그룹 조회 실패: ${translateVerifyError(result.error)}`);
+        log(`Slack 사용자 그룹 조회에 실패했습니다: ${translateVerifyError(result.error)}`);
         return [];
       }
       const data = result.data;
       if (!data.ok || !Array.isArray(data.usergroups)) {
-        if (!data.ok) log(`Slack 사용자 그룹 조회 실패: ${String(data.error ?? "unknown_error")}`);
+        if (!data.ok) log(`Slack 사용자 그룹 조회에 실패했습니다: ${String(data.error ?? "unknown_error")}`);
         return [];
       }
       return (data.usergroups as Array<Record<string, unknown>>).map((g) => ({

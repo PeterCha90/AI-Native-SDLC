@@ -123,7 +123,7 @@ test("verifier.postTest sends the connection-check text to the channel", async (
   const result = await verifier.postTest("xoxb-abc", "C0ABC123");
   assert.deepEqual(result, { ok: true });
   assert.equal(sentBody.channel, "C0ABC123");
-  assert.equal(sentBody.text, "✅ AI-SDLC 연결 확인 — 이 채널에서 티켓 알림과 승인을 받는다.");
+  assert.equal(sentBody.text, "✅ AI-SDLC 연결 확인 — 이 채널에서 티켓 알림과 승인을 받습니다.");
 });
 
 test("verifier.postTest surfaces not_in_channel", async () => {
