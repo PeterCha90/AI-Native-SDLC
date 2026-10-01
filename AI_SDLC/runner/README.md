@@ -169,6 +169,8 @@ npx ai-sdlc-runner start
 | `[✅ 승인]` / `[⛔ 반려]` | 역할 확인 후 Linear 게이트 카드를 Done / Canceled로. 반려는 사유를 입력받는다 |
 | `[답변 반영]` / `[이대로 진행]` | 01 인터뷰 — 스레드 답글을 반영해 intent를 고치거나, 질문을 남긴 채 진행 |
 
+러너를 처음 켤 때 최근 24시간 안에 생긴 아직 실행되지 않은 `sdlc-auto` 티켓도 알립니다. 사람이 만든 티켓은 켠 뒤에 생긴 것만 알립니다.
+
 승인 기록은 Linear 게이트 카드에 남는다. Slack이 끊겨도 Linear에서 카드를 직접 옮기면 똑같이 진행된다. **봇이 들어간 채널의 멤버는 누구나 실행을 시작할 수 있고**, 실행은 저장소에서 `claude -p`를 권한 확인 없이 돌리므로 봇은 제한된 채널에 둔다.
 
 ---
@@ -198,6 +200,7 @@ npx ai-sdlc-runner start
 | `gateTimeoutMs` | `1800000` | 승인 대기 상한 (30분, 넘으면 중단) |
 | `interviewMaxRounds` | `5` | 01 인터뷰 최대 라운드 |
 | `reworkMaxAttempts` | `3` | 01·02·03 반려 후 재작업 최대 횟수 |
+| `catchUpHours` | `24` | 러너를 처음 켤 때 그 이전 N시간 안에 생긴, 아직 실행되지 않은 `sdlc-auto` 티켓까지 알리는 범위. `0`이면 끈다 |
 | `maxAutoTicketDepth` | `3` | 06이 연쇄로 만들 수 있는 자동 티켓 깊이 |
 | `e2eDriver` / `demoAppUrl` | `ego-lite` / `http://localhost:5173` | 04 Test의 e2e 도구와 열어 볼 앱 주소 |
 

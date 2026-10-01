@@ -37,6 +37,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     linearPollIntervalMs: 30_000,
     interviewMaxRounds: 5,
     reworkMaxAttempts: 3,
+    catchUpHours: 24,
     slack: null,
     ...overrides,
   };

@@ -180,6 +180,7 @@ function makeConfig(repoPath: string, runnerDir: string, overrides: Partial<Conf
     linearPollIntervalMs: 30_000,
     interviewMaxRounds: 5,
     reworkMaxAttempts: 3,
+    catchUpHours: 24,
     slack: null,
     ...overrides,
   };

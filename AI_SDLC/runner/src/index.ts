@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { fileURLToPath } from "node:url";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig } from "./config.ts";
 import type { Config } from "./config.ts";
@@ -243,7 +244,26 @@ export function startServer(config: Config = loadConfig()): void {
           await slackNotifier.postTicketNotice(t, startMode === "auto" ? "auto" : "new");
           if (startMode === "auto") enqueueTicket(t);
         },
+        // On the very first poll (no state file), also surface autoTicketLabel tickets created
+        // before this runner's first start — e.g. an incident ticket the 06 Maintain loop opened
+        // while the runner was down — but only ones that haven't already run (no <key>.meta.json).
+        // A human-created ticket (no autoTicketLabel) is never caught up on; only ones created
+        // after this start are announced for those, same as before this feature.
+        catchUp:
+          config.catchUpHours > 0
+            ? {
+                sinceMs: config.catchUpHours * 60 * 60 * 1000,
+                include: (t) =>
+                  t.labels.includes(config.autoTicketLabel) && !existsSync(join(stateDir, `${t.key || t.id}.meta.json`)),
+              }
+            : undefined,
       });
+      const caughtUpCount = await watcher.poll();
+      if (caughtUpCount > 0) {
+        console.log(
+          `[watcher] 최근 ${config.catchUpHours}시간의 ${config.autoTicketLabel} 티켓 ${caughtUpCount}건을 확인했습니다`,
+        );
+      }
       watcher.start();
     }
   }
