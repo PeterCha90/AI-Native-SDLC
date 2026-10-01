@@ -115,7 +115,12 @@ export async function handleGateAction(
     } catch (err) {
       return { ok: false, message: `게이트 정보를 찾을 수 없습니다: ${(err as Error).message}` };
     }
+    // Gates are created lazily, one at a time — a stage this run hasn't reached yet simply has no
+    // entry, which is different from a corrupt/missing file (already handled above).
     const gate = gates[a.stage];
+    if (!gate) {
+      return { ok: false, message: "이 단계의 게이트가 아직 생성되지 않았습니다." };
+    }
 
     let stateType;
     try {
@@ -290,7 +295,7 @@ async function updateGateMessage(
   if (!ts) return;
   let gateUrl = "";
   try {
-    gateUrl = (await readGateMap(o.runnerDir, o.key))[o.stage].url;
+    gateUrl = (await readGateMap(o.runnerDir, o.key))[o.stage]?.url ?? "";
   } catch {
     // best effort — the message still updates without a working Linear link
   }
@@ -336,6 +341,7 @@ export async function startSlackApp(
     client,
     channel: slackConfig.channelId,
     stateDir: o.stateDir,
+    runnerDir: o.runnerDir,
     roleGroups: slackConfig.roleGroups,
     roleUsers: slackConfig.roleUsers,
   });

@@ -2,7 +2,7 @@
 
 ## 1. 파이프라인 전체 흐름
 
-Linear 티켓이 들어오면 `00 setup`이 승인 게이트용 Linear 하위 이슈 6개를 만든 뒤 6단계(01 intent ~ 06 maintain)가 순차로 실행된다. 각 단계 앞뒤에는 사람이 그 하위 이슈를 Done/Canceled로 옮길 때까지 파이프라인이 멈추는 승인 게이트가 있다(§2). 04 test에서 실패가 나거나 06 maintain이 σ-tier 이탈을 감지하면 새 Linear 티켓이 자동으로 만들어져 01로 되돌아간다. `SDLC_AUTO_APPROVE=1`을 주면 00 setup과 모든 게이트를 건너뛰는 리허설 모드가 된다.
+Linear 티켓이 들어오면 6단계(01 intent ~ 06 maintain)가 순차로 실행된다. 각 단계 앞뒤에는 사람이 승인 게이트용 Linear 하위 이슈를 Done/Canceled로 옮길 때까지 파이프라인이 멈추는 승인 게이트가 있다(§2). 그 하위 이슈는 **6개가 한꺼번에 미리 만들어지지 않는다** — 각 단계가 끝나고 그 단계의 게이트가 열리는 바로 그 순간에, 러너가 어댑터(`createSubIssue`)로 하나씩 만든다. 04 test에서 실패가 나거나 06 maintain이 σ-tier 이탈을 감지하면 새 Linear 티켓이 자동으로 만들어져 01로 되돌아간다. `SDLC_AUTO_APPROVE=1`을 주면 모든 게이트를 건너뛰는 리허설 모드가 되고, 이 모드에서는 게이트 하위 이슈 자체가 전혀 만들어지지 않는다.
 
 ```
  Linear 티켓 (사람이 작성, 또는 06이 자동 생성 — 라벨 sdlc-auto, sdlc-depth:N)
@@ -19,12 +19,6 @@ Linear 티켓이 들어오면 `00 setup`이 승인 게이트용 Linear 하위 �
         │  runner/.state/ 아래 단계 로그·게이트 맵·상태 파일이 갱신된다 — Linear 원 티켓의
         │  게이트 하위 이슈와(Slack이 켜져 있으면) 티켓 스레드가 이 상태를 보여준다.
         ▼
- ┌────────────────────────────────────────────────────────────┐
- │ 00 setup — Linear MCP로 승인 게이트 하위 이슈 6개 생성        │
- │            runner/.state/<key>.gates.json 에 매핑을 기록      │
- │            (SDLC_AUTO_APPROVE=1 이면 이 단계 자체를 건너뛴다) │
- └───────────────────────────────┬───────────────────────────────┘
-                                  ▼
  ┌────────────┐         ┌────────────┐         ┌────────────┐
  │ 01 intent  │─[게이트]▶│ 02 spec    │─[게이트]▶│ 03 plan    │
  │ sdlc-intent│ 01-plan │ sdlc-spec  │02-design│ sdlc-plan  │
@@ -59,7 +53,7 @@ Linear 티켓이 들어오면 `00 setup`이 승인 게이트용 Linear 하위 �
 
 ## 2. 승인 게이트 프로토콜
 
-00 setup이 만든 하위 이슈 6개가 각 단계의 게이트다. `gate.ts`가 그 상태를 읽어 다음 단계 진행 여부를 결정하며, 판정 자체(`classifyState`)는 모델이 관여하지 않는 순수 함수다.
+각 단계의 게이트는 그 단계가 끝난 직후, 러너가 `source.createSubIssue()`로 그 하나만 만든다(§2 도입부 참고) — 여섯 개를 미리 만들어 두지 않는다. `gate.ts`가 그 상태를 읽어 다음 단계 진행 여부를 결정하며, 판정 자체(`classifyState`)는 모델이 관여하지 않는 순수 함수다.
 
 | Linear 워크플로 상태 타입(`StateType`) | 판정 | 파이프라인 동작 |
 | --- | --- | --- |
@@ -78,8 +72,8 @@ Linear 티켓이 들어오면 `00 setup`이 승인 게이트용 Linear 하위 �
 | `05-deploy` | Release Manager | PR 생성 성공 후에만 (실패하면 이 게이트를 열지 않고 06으로 진행) |
 | `06-maintain` | Service Owner | 06 maintain 판정 완료 후, tier와 무관하게 항상 |
 
-- 게이트 맵은 `runner/.state/<ticket-key>.gates.json`에 저장된다. 00 setup이 이 파일을 만들지 못했거나 형식이 깨져 있으면 `readGateMap`이 에러를 던지고 파이프라인은 그 자리에서 중단된다 — 게이트 없이 조용히 6단계를 통과시키는 상황을 원천 차단하는 설계다.
-- `SDLC_AUTO_APPROVE=1`이면 00 setup 자체를 실행하지 않고 모든 게이트를 즉시 승인 처리하며, 매번 "리허설 모드"라고 로그에 남긴다.
+- 게이트 맵은 `runner/.state/<ticket-key>.gates.json`에 저장되며, **부분(partial) 맵**이다 — 아직 그 단계에 도달하지 않은 게이트는 키 자체가 없는 게 정상이다. 러너는 각 게이트를 열기 직전 `gates[stage]`가 있으면 재사용하고, 없으면 `createSubIssue()`로 만들어 그 자리에서 맵에 추가해 원자적으로(temp 파일 + rename) 다시 쓴다. 파일이 아예 없으면 빈 맵으로 시작하지만, **존재하는 파일이 손상돼 있으면**(JSON 파싱 실패, 또는 들어있는 항목 중 하나라도 형식이 깨짐) `readGateMap`이 에러를 던지고 파이프라인은 그 자리에서 중단된다 — 게이트 없이 조용히 단계를 통과시키는 상황을 원천 차단하는 설계다. `createSubIssue()` 호출 자체가 실패해도 마찬가지로 파이프라인을 중단한다(원 티켓에 가능하면 코멘트를 남기고 `runFinished("aborted")`를 알린다) — 게이트를 열 수 없으면 그 단계는 진행될 수 없다.
+- `SDLC_AUTO_APPROVE=1`이면 게이트 하위 이슈를 전혀 만들지 않고 모든 게이트를 즉시 승인 처리하며, 매번 "리허설 모드"라고 로그에 남긴다.
 - 게이트 대기에 들어가기 전, 해당 하위 이슈에 리뷰용 요약(단계 산출물 경로, 테스트 결과, PR diff 요약 등)이 먼저 코멘트로 남는다 — 승인자는 카드를 열어보는 것만으로 판단 근거를 얻는다.
 
 ### 2.1 01 Plan 인터뷰 루프
@@ -115,8 +109,7 @@ Linear 티켓이 들어오면 `00 setup`이 승인 게이트용 Linear 하위 �
 
 | 단계 | 스킬/도구 | 입력 | 출력 | 게이트 | 실행 방식 |
 | --- | --- | --- | --- | --- | --- |
-| 00 setup | Linear MCP 직접 호출(스킬 없음) | 티켓 | `runner/.state/<key>.gates.json` (하위 이슈 6개) | 없음(게이트를 만드는 단계) | `claude -p`(`Write`, `mcp__linear__*`) |
-| 01 intent | `sdlc-intent` | 티켓(title, body, labels) | `docs/intent/<id>.md` | `01-plan` | `claude -p` |
+| 01 intent | `sdlc-intent` | 티켓(title, body, labels) | `docs/intent/<id>.md` | `01-plan`(01 intent 완료 직후, 러너가 `createSubIssue()`로 그 자리에서 생성) | `claude -p` |
 | 02 spec | `sdlc-spec` | `docs/intent/<id>.md` | `docs/spec/<id>.md` | `02-design` | `claude -p` |
 | 03 plan | `sdlc-plan` | `docs/spec/<id>.md` | `docs/plan/<id>.md`(코드 미변경) | `03-build` | `claude -p` |
 | 03 build | 스킬 없음, 승인된 plan.md를 순서대로 구현 | `docs/plan/<id>.md` | 코드 diff(`plan-drift` 훅 적용) | 없음 | `claude -p` |
@@ -128,7 +121,7 @@ Linear 티켓이 들어오면 `00 setup`이 승인 게이트용 Linear 하위 �
 
 모든 `claude -p` 호출과 각 게이트 판정은 `runner/.state/<key>.json`에 시작/종료 시각, 성공 여부, 세션 jsonl 경로를 이어붙인다. 이 상태 로그는 파이프라인이 소비하는 아티팩트가 아니지만, `/sdlc-status`와 Slack 알림이 읽는 원본이다 — `runner/.state/` 아래 단계 로그·게이트 맵·라이브 상태·메타 파일을 읽어 현재 단계와 대기 역할을 보여준다. 세션 jsonl 경로는 "세션 로그"로 계속 남아 디버깅용으로만 쓰인다.
 
-`intent.md`가 요구한 "zoetrope로 시각화"는 Linear 원 티켓 아래 게이트 하위 이슈 6개와, Slack이 켜져 있다면 티켓 스레드가 대신한다. zoetrope는 세션 하나의 내부(도구 호출, 서브에이전트 트리)만 보여줄 뿐, 여러 단계에 걸친 흐름·대기 중인 게이트·06→01 재귀 루프처럼 파이프라인 수준의 상태는 애초에 표현할 수 없다. 초기 버전은 러너 자신이 대시보드(`GET /`)를 띄워 이 세 가지(단계 간 흐름, 게이트 대기, 신규 티켓 루프)를 그렸지만, 같은 정보가 이미 Linear 게이트 카드와 Slack 스레드 두 곳에 보이므로 세 번째 화면을 없앴다.
+`intent.md`가 요구한 "zoetrope로 시각화"는 Linear 원 티켓 아래 게이트 하위 이슈(진행하면서 한 단계씩 늘어나 완료 시점엔 6개가 된다)와, Slack이 켜져 있다면 티켓 스레드가 대신한다. zoetrope는 세션 하나의 내부(도구 호출, 서브에이전트 트리)만 보여줄 뿐, 여러 단계에 걸친 흐름·대기 중인 게이트·06→01 재귀 루프처럼 파이프라인 수준의 상태는 애초에 표현할 수 없다. 초기 버전은 러너 자신이 대시보드(`GET /`)를 띄워 이 세 가지(단계 간 흐름, 게이트 대기, 신규 티켓 루프)를 그렸지만, 같은 정보가 이미 Linear 게이트 카드와 Slack 스레드 두 곳에 보이므로 세 번째 화면을 없앴다.
 
 ## 4. ticket-source 어댑터
 
@@ -146,7 +139,7 @@ interface TicketSource {
   parse(rawBody: string): Ticket | null;
   createTicket(t: NewTicket): Promise<Ticket>;
   comment(ticketId: string, body: string): Promise<void>;
-  createSubIssue(parentId: string, t: NewTicket): Promise<Ticket>;  // 00 setup이 게이트용 하위 이슈를 만들 때 사용
+  createSubIssue(parentId: string, t: NewTicket): Promise<Ticket>;  // 러너가 각 단계의 게이트 하위 이슈를 그 자리에서 하나씩 만들 때 사용
   getStateType(issueId: string): Promise<StateType>;                // gate.ts가 승인 대기 중 폴링
   listComments(issueId: string): Promise<IssueComment[]>;           // canceled 게이트의 반려 사유(최신 코멘트) 조회
 }

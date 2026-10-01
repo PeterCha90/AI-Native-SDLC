@@ -6,7 +6,7 @@ import type { Config } from "./config.ts";
 import type { StateType, Ticket, TicketSource } from "./adapters/types.ts";
 import { runStage, type StageResult } from "./claude.ts";
 import { runE2E } from "./e2e.ts";
-import { awaitApproval, gateMapPath, readGateMap, type GateMap, type StageId } from "./gate.ts";
+import { awaitApproval, readGateMap, writeGateMap, type GateMap, type GateRef, type StageId } from "./gate.ts";
 import type { LiveStatus, RunMeta, StageLogEntry } from "./state.ts";
 import { noopEvents, safeEvents, type PipelineEvents } from "./events.ts";
 import { noInterview, parseOpenQuestions, type InterviewChannel } from "./interview.ts";
@@ -144,67 +144,33 @@ async function detectTestCommand(repoDir: string): Promise<[string, string[]] | 
   return null;
 }
 
+/** A one-line "what this gate approves" shown in the sub-issue body at creation time. */
+const GATE_DESCRIPTIONS: Record<StageId, string> = {
+  "01-plan": "01 Plan 산출물(intent.md)이 티켓 의도를 맞게 담았는지 승인합니다.",
+  "02-design": "02 Design 산출물(spec.md)의 정책 충돌 정리와 진행 여부를 승인합니다.",
+  "03-build": "03 Build 착수 전, 작업 계획(plan.md)대로 구현해도 되는지 승인합니다.",
+  "04-test": "04 Test의 기계적 증거(단위/e2e 결과)를 의도·리스크 관점에서 승인합니다.",
+  "05-deploy": "05 Deploy: 이 PR의 프로덕션 릴리스를 승인합니다.",
+  "06-maintain": "06 Maintain의 감지 결과와 후속 티켓 생성 여부를 승인(트리아지)합니다.",
+};
+
 /**
- * 00-setup: build the approval pipeline inside Linear itself.
- *
- * Deliberately an agent step rather than a runner API call — this is the playbook's
- * "write the outcome back through an MCP connector" in its most literal form, and it
- * means the sub-issues, their role labels and their descriptions are authored in the
- * same session log the gate map links to.
+ * Thrown when a gate's Linear sub-issue could not be created. By the time this is thrown, every
+ * abort side effect (state log, Linear comment on the original ticket, `runFinished("aborted")`)
+ * has already happened — `runPipeline`'s outer catch just needs to stop propagating it.
  */
-async function setupGates(
-  runnerDir: string,
-  key: string,
-  ticket: Ticket,
-  config: Config,
-  repoRoot: string,
-  events: PipelineEvents,
-): Promise<GateMap> {
-  const outPath = gateMapPath(runnerDir, key);
-  await mkdir(join(runnerDir, ".state"), { recursive: true });
+class PipelineAbortedError extends Error {}
 
-  // `/sdlc run <키>` after an aborted run (or any restart) must not duplicate the six Linear gate
-  // sub-issues — reuse whatever 00-setup already wrote last time, and skip running the agent
-  // again, as long as the file on disk still parses as a valid gate map.
-  if (existsSync(outPath)) {
-    try {
-      const existing = await readGateMap(runnerDir, key);
-      console.log(`[gate:setup] 기존 게이트 재사용 (${outPath})`);
-      return existing;
-    } catch (err) {
-      console.warn(`[gate:setup] 기존 게이트 맵이 손상돼 새로 만든다: ${(err as Error).message}`);
-    }
-  }
+/** Strips a doc's YAML front matter and HTML comments before it's shown to a human as a gate's content. */
+function stripDocNoise(text: string): string {
+  const withoutFrontMatter = text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
+  return withoutFrontMatter.replace(/<!--[\s\S]*?-->/g, "").trim();
+}
 
-  const stageLines = (Object.entries(config.gateRoles) as Array<[StageId, string]>)
-    .map(([stage, role]) => `  - "${stage}": 제목 "[gate] ${stage} — 승인자: ${role}"`)
-    .join("\n");
-
-  const prompt = [
-    `Linear MCP를 사용해 이슈 "${ticket.key}" (id: ${ticket.id}, ${ticket.url}) 아래에 승인 게이트용 하위 이슈 6개를 만들어라.`,
-    `부모 이슈와 같은 팀에 만든다.`,
-    ``,
-    `만들 하위 이슈:`,
-    stageLines,
-    ``,
-    `각 하위 이슈 본문에는 다음을 넣어라:`,
-    `  - 이 게이트가 무엇을 승인하는 것인지 한 줄`,
-    `  - "승인하려면 이 카드를 Done 으로 옮긴다. 반려하려면 Canceled 로 옮기고 사유를 코멘트로 남긴다."`,
-    `  - 원 티켓 링크 ${ticket.url}`,
-    ``,
-    `모두 만든 뒤, 정확히 아래 형식의 JSON을 ${outPath} 에 Write 해라. 다른 키를 추가하지 마라.`,
-    `{`,
-    `  "01-plan":     { "issueId": "<uuid>", "key": "<식별자>", "url": "<url>" },`,
-    `  "02-design":   { ... }, "03-build": { ... }, "04-test": { ... },`,
-    `  "05-deploy":   { ... }, "06-maintain": { ... }`,
-    `}`,
-    `issueId 는 Linear 내부 UUID 여야 한다 (식별자 ENG-12 가 아니라).`,
-  ].join("\n");
-
-  await runAndLog(runnerDir, key, "00-setup", prompt, repoRoot, events, config.pluginDir, ["Write", "mcp__linear__*"]);
-  // Throws with an explicit message if the agent didn't produce a usable map — the
-  // pipeline must not fall through into an ungated run.
-  return readGateMap(runnerDir, key);
+/** Reads a stage artifact for display at its gate — repo-relative paths only, front matter/comments stripped. */
+async function readArtifactBody(path: string): Promise<string> {
+  if (!existsSync(path)) return "_(파일이 아직 생성되지 않았습니다)_";
+  return stripDocNoise(await readFile(path, "utf8"));
 }
 
 /**
@@ -278,7 +244,7 @@ export async function runPipeline(
   const ev = safeEvents(events);
 
   // Written once, up front, so a listener can show a card for this run the moment it starts —
-  // it never has to wait for 00-setup to finish.
+  // it never has to wait for the first gate card to be created.
   const meta: RunMeta = {
     key,
     title: ticket.title,
@@ -311,31 +277,83 @@ export async function runPipeline(
   await mkdir(join(workDir, "docs", "spec"), { recursive: true });
   await mkdir(join(workDir, "docs", "plan"), { recursive: true });
 
-  const gates = config.autoApprove ? null : await setupGates(runnerDir, key, ticket, config, workDir, ev);
+  // Partial — entries are added one at a time, right before the stage they gate actually waits.
+  // A restart picks up whatever's already here and only creates what's still missing.
+  const gates: GateMap | null = config.autoApprove ? null : await readGateMap(runnerDir, key);
+
+  /**
+   * Creates (or reuses) the Linear sub-issue for `stage`, lazily — called from `gate()` right
+   * before that stage's wait, never up front. A restart/rework reuses whatever's already in
+   * `gates[stage]`; nothing here ever creates a second card for the same stage.
+   *
+   * If `createSubIssue` fails, the gate cannot open and the run must not proceed ungated: this
+   * logs loudly, best-effort comments on the original ticket, fires `runFinished("aborted")`,
+   * and throws `PipelineAbortedError` so the caller unwinds without running anything further.
+   */
+  async function ensureGateRef(stage: StageId): Promise<GateRef> {
+    const existing = gates![stage];
+    if (existing) return existing;
+
+    const role = config.gateRoles[stage];
+    const body = [GATE_DESCRIPTIONS[stage], "", "승인하려면 이 카드를 Done 으로 옮겨 주세요. 반려하려면 Canceled 로 옮기고 사유를 코멘트로 남겨 주세요.", "", ticket.url].join(
+      "\n",
+    );
+
+    let created: Ticket;
+    try {
+      created = await source.createSubIssue(ticket.id, { title: `[gate] ${stage} — 승인자: ${role}`, body });
+    } catch (err) {
+      const message = `게이트 하위 이슈 생성 실패 (${stage}): ${(err as Error).message}. 게이트 없이는 진행할 수 없어 파이프라인을 중단합니다.`;
+      console.error(`[pipeline:${key}] ${message}`);
+      await writeLive(runnerDir, key, { stage: `gate:${stage}`, phase: "aborted", since: new Date().toISOString() });
+      await appendStateLog(runnerDir, key, {
+        stage: `gate:${stage}`,
+        startedAt: new Date().toISOString(),
+        endedAt: new Date().toISOString(),
+        ok: false,
+        sessionJsonlPath: null,
+        note: message,
+      });
+      await source.comment(ticket.id, message).catch((commentErr: Error) => {
+        console.error(`[pipeline:${key}] 중단 사유를 원 티켓에 코멘트로 남기지 못했다: ${commentErr.message}`);
+      });
+      await ev.runFinished(key, "aborted");
+      throw new PipelineAbortedError(message);
+    }
+
+    const ref: GateRef = { issueId: created.id, key: created.key, url: created.url };
+    gates![stage] = ref;
+    await writeGateMap(runnerDir, key, gates!);
+    return ref;
+  }
 
   /**
    * Blocks on the human who owns this stage. `reason` is set when rejected — `gateWithRework`
-   * below is the only caller that reads it.
+   * below is the only caller that reads it. `content` is the full artifact/result markdown shown
+   * at the gate (Slack renders it verbatim as a markdown block; Linear gets it in the summary
+   * comment, in full); `hint` is the short stage-specific instruction shown after it.
    */
-  async function gate(stage: StageId, summary: string): Promise<{ approved: boolean; reason?: string }> {
+  async function gate(stage: StageId, parts: { content: string; hint: string }): Promise<{ approved: boolean; reason?: string }> {
     if (!gates) {
       console.log(`[gate:${stage}] SDLC_AUTO_APPROVE=1 — 게이트를 건너뛴다 (리허설 모드).`);
       return { approved: true };
     }
+    const gateRef = await ensureGateRef(stage);
+    const linearComment = `${parts.content}\n\n${parts.hint}`;
     await writeLive(runnerDir, key, {
       stage: `gate:${stage}`,
       phase: "waiting",
       role: config.gateRoles[stage],
-      gateUrl: gates[stage].url,
+      gateUrl: gateRef.url,
       since: new Date().toISOString(),
     });
-    await ev.gateWaiting(key, stage, config.gateRoles[stage], gates[stage], summary);
+    await ev.gateWaiting(key, stage, config.gateRoles[stage], gateRef, linearComment, parts.content, parts.hint);
     const result = await awaitApproval({
       source,
-      gate: gates[stage],
+      gate: gateRef,
       stage,
       role: config.gateRoles[stage],
-      summary,
+      summary: linearComment,
       pollIntervalMs: config.gatePollIntervalMs,
       timeoutMs: config.gateTimeoutMs,
       autoApprove: false,
@@ -449,7 +467,7 @@ export async function runPipeline(
   async function gateWithRework(
     stage: StageId,
     artifactPath: string,
-    buildSummary: (latest: StageResult) => string,
+    buildContent: (latest: StageResult) => Promise<{ content: string; hint: string }>,
     thread: StageThread,
     reworkStageLabel: string = `${stage}-rework`,
   ): Promise<{ approved: boolean; sessionId: string }> {
@@ -458,7 +476,7 @@ export async function runPipeline(
     let current = thread.sessionId;
     let latest = thread.latest;
     for (;;) {
-      const { approved, reason } = await gate(stage, buildSummary(latest));
+      const { approved, reason } = await gate(stage, await buildContent(latest));
       if (approved) return { approved: true, sessionId: current };
       if (!REWORKABLE_STAGES.includes(stage) || attempt >= maxAttempts) {
         return { approved: false, sessionId: current };
@@ -477,16 +495,19 @@ export async function runPipeline(
       // fallback) can fail just like any other stage, and the human re-approving must see that.
       latest = reworkResult;
 
-      if (gates) {
-        await source.setStateType(gates[stage].issueId, "unstarted").catch((err: Error) => {
+      // `gate()` above already called `ensureGateRef(stage)`, so `gates[stage]` is guaranteed set
+      // by this point — this reuses that SAME card (spec §3: rework never creates a new one).
+      const ref = gates?.[stage];
+      if (gates && ref) {
+        await source.setStateType(ref.issueId, "unstarted").catch((err: Error) => {
           console.error(`[gate:${stage}] 게이트 카드를 unstarted로 되돌리지 못했다 (계속한다): ${err.message}`);
         });
-        await source.comment(gates[stage].issueId, `재작업 ${attempt}/${maxAttempts}`).catch((err: Error) => {
+        await source.comment(ref.issueId, `재작업 ${attempt}/${maxAttempts}`).catch((err: Error) => {
           console.error(`[gate:${stage}] "재작업 ${attempt}/${maxAttempts}" 코멘트를 남기지 못했다 (계속한다): ${err.message}`);
         });
         // The card was just moved back to "unstarted" — make sure the next poll doesn't read a
         // stale "canceled" as a second rejection nobody made.
-        await confirmNotCanceled(stage, gates[stage].issueId);
+        await confirmNotCanceled(stage, ref.issueId);
       }
 
       if (stage === "01-plan") {
@@ -497,210 +518,232 @@ export async function runPipeline(
     }
   }
 
-  // ── 01 Plan ─────────────────────────────────────────────────────────────────
-  const intentResult = await runAndLog(
-    runnerDir,
-    key,
-    "01-intent",
-    `sdlc-intent 스킬을 사용해 아래 티켓에서 ${docsIntent} 를 작성하라.\n\n` +
-      `티켓: ${ticket.title}\n\n${ticket.body}\n\n출처: ${ticket.url}`,
-    workDir,
-    ev,
-    config.pluginDir,
-    DOC_WRITE_TOOLS,
-  );
-  const afterInitialInterview = await runInterviewLoop({ sessionId: intentResult.sessionId, latest: intentResult });
-  const plan01 = await gateWithRework(
-    "01-plan",
-    docsIntent,
-    (latest) => `${artifactWarning(latest, docsIntent)}01 Plan 산출물: \`${docsIntent}\`\n\n문제/원하는 결과/영향 범위/제약/미해결 질문이 티켓 의도와 맞는지 확인해 주세요.`,
-    afterInitialInterview,
-  );
-  if (!plan01.approved) {
-    await writeLive(runnerDir, key, { stage: "01-plan", phase: "aborted", since: new Date().toISOString() });
-    await ev.runFinished(key, "aborted");
-    return;
-  }
-
-  // ── 02 Design ───────────────────────────────────────────────────────────────
-  const specResult = await runAndLog(
-    runnerDir,
-    key,
-    "02-spec",
-    `sdlc-spec 스킬을 사용해 ${docsIntent} 를 읽고 ${docsSpec} 를 작성하라. 정책 충돌은 해당 설계 항목 바로 아래 인라인으로 표시하라.`,
-    workDir,
-    ev,
-    config.pluginDir,
-    DOC_WRITE_TOOLS,
-  );
-  const design02 = await gateWithRework(
-    "02-design",
-    docsSpec,
-    (latest) => `${artifactWarning(latest, docsSpec)}02 Design 산출물: \`${docsSpec}\`\n\n"정책 충돌" 섹션을 각 정책 담당자와 정리한 뒤 진행 여부를 결정해 주세요.`,
-    { sessionId: specResult.sessionId, latest: specResult },
-  );
-  if (!design02.approved) {
-    await writeLive(runnerDir, key, { stage: "02-design", phase: "aborted", since: new Date().toISOString() });
-    await ev.runFinished(key, "aborted");
-    return;
-  }
-
-  // ── 03 Build ────────────────────────────────────────────────────────────────
-  const planResult = await runAndLog(
-    runnerDir,
-    key,
-    "03-plan",
-    `sdlc-plan 스킬을 사용해 ${docsSpec} 를 읽고 ${docsPlan} 를 작성하라. "무엇이 깨질 수 있는가" 심문을 반드시 포함하라. 코드는 아직 수정하지 마라.`,
-    workDir,
-    ev,
-    config.pluginDir,
-    DOC_WRITE_TOOLS,
-  );
-  const build03 = await gateWithRework(
-    "03-build",
-    docsPlan,
-    (latest) => `${artifactWarning(latest, docsPlan)}03 Build 착수 계획: \`${docsPlan}\`\n\n변경할 파일 목록과 "무엇이 깨질 수 있는가"를 심문하고, 이대로 구현해도 되는지 판단해 주세요.\n승인 후에만 에이전트가 코드를 편집합니다.`,
-    { sessionId: planResult.sessionId, latest: planResult },
-    // This gate approves the *plan* (docsPlan, written by the 03-plan stage) before any code is
-    // touched — the rework session edits that same plan document, so it's "03-plan-rework", not
-    // "03-build-rework" (03-build itself only runs after this gate is approved).
-    "03-plan-rework",
-  );
-  if (!build03.approved) {
-    await writeLive(runnerDir, key, { stage: "03-build", phase: "aborted", since: new Date().toISOString() });
-    await ev.runFinished(key, "aborted");
-    return;
-  }
-
-  await runAndLog(
-    runnerDir,
-    key,
-    "03-build",
-    `승인된 ${docsPlan} 의 작업 목록을 순서대로 구현하라. 계획에 없는 파일은 건드리지 마라 — ` +
-      `plan-drift 훅이 커밋 시점에 계획과 실제 변경을 대조한다. 저장소의 CLAUDE.md와 .claude/CLAUDE.md 규칙을 따르라.`,
-    workDir,
-    ev,
-    config.pluginDir,
-  );
-
-  // ── 04 Test ─────────────────────────────────────────────────────────────────
-  await runAndLog(
-    runnerDir,
-    key,
-    "04-test-loop",
-    `sdlc-test 스킬을 사용해 ${docsPlan} 의 "성공 기준"을 실제로 실행하고, 통과할 때까지 피드백 루프를 돌려라. ` +
-      `이건 버그 수정 작업일 수 있으니 테스트를 고쳐서 통과시키지 마라. 마지막에 verifier 서브에이전트로 독립 검증을 받아라.`,
-    workDir,
-    ev,
-    config.pluginDir,
-  );
-
-  const testCmd = await detectTestCommand(workDir);
-  const unitResult = testCmd ? await runCommand(testCmd[0], testCmd[1], workDir) : { ok: true, output: "no test command detected, skipped" };
-  const e2eResult = await runE2E(config.e2eDriver, config.demoAppUrl).catch((err: Error) => ({ ok: false, output: err.message }));
-  const testOk = unitResult.ok && e2eResult.ok;
-  await appendStateLog(runnerDir, key, {
-    stage: "04-test",
-    startedAt: new Date().toISOString(),
-    endedAt: new Date().toISOString(),
-    ok: testOk,
-    sessionJsonlPath: null,
-    note: `unit: ${unitResult.ok ? "ok" : "fail"}; e2e: ${e2eResult.ok ? "ok" : "fail"}`,
-  });
-  console.log(`[pipeline:${key}] 04-test ${testOk ? "ok" : "FAILED"}`);
-
-  const testSummary =
-    `04 Test 결과\n\n- 단위/빌드: ${unitResult.ok ? "통과" : "실패"}\n- e2e: ${e2eResult.ok ? "통과" : "실패"}\n\n` +
-    "```\n" +
-    (unitResult.output + "\n" + e2eResult.output).slice(-1500) +
-    "\n```";
-  // A rejection here means "do not ship this", not "throw the run away": 06 Maintain still runs
-  // below, records why, and — if the detection tier warrants it — opens the follow-up ticket that
-  // closes the loop. Gates 01–03 are different: rejecting those means the work itself was wrong,
-  // so the pipeline returns and there is nothing to maintain.
-  const testApproved = (await gate("04-test", `${testSummary}\n\n기계적 증거는 위에 붙였습니다. 의도와 리스크 관점에서 판단해 주세요.`)).approved;
-
-  // ── 05 Deploy ───────────────────────────────────────────────────────────────
-  let deployOk = false;
-  let deployOutput = "";
-  let reviewNote = "";
-  if (testOk && testApproved) {
-    const reviewResult = await runAndLog(
+  try {
+    // ── 01 Plan ───────────────────────────────────────────────────────────────
+    const intentResult = await runAndLog(
       runnerDir,
       key,
-      "05-review",
-      `sdlc-review 스킬을 사용해 이 브랜치의 diff 를 Bugs/Security/Compliance 세 패스로 리뷰하라. ` +
-        `저장소 REVIEW.md 의 정책을 따르고, ${docsSpec} 의 요구사항 대비 준수 여부를 확인하라. 승인하지 마라 — 발견만 보고하라.`,
+      "01-intent",
+      `sdlc-intent 스킬을 사용해 아래 티켓에서 ${docsIntent} 를 작성하라.\n\n` +
+        `티켓: ${ticket.title}\n\n${ticket.body}\n\n출처: ${ticket.url}`,
       workDir,
       ev,
       config.pluginDir,
-      ["Read", "Glob", "Grep", "Bash(git diff *)", "Bash(git log *)", "Bash(git status)", "Skill"],
+      DOC_WRITE_TOOLS,
     );
-    // The release manager needs to know whether a review actually happened. An unreported failed
-    // review session looks identical to a clean one at the gate.
-    if (!reviewResult.ok) {
-      reviewNote = `> ⚠️ sdlc-review 세션이 실패했습니다 (${reviewResult.error ?? (reviewResult.timedOut ? "타임아웃" : `exit ${reviewResult.exitCode}`)}). Bugs/Security/Compliance 리뷰 결과가 없습니다.\n\n`;
+    const afterInitialInterview = await runInterviewLoop({ sessionId: intentResult.sessionId, latest: intentResult });
+    const plan01 = await gateWithRework(
+      "01-plan",
+      docsIntent,
+      async (latest) => ({
+        content: `${artifactWarning(latest, docsIntent)}01 Plan 산출물: \`${relative(workDir, docsIntent)}\`\n\n${await readArtifactBody(docsIntent)}`,
+        hint: "문제/원하는 결과/영향 범위/제약/미해결 질문이 티켓 의도와 맞는지 확인해 주세요.",
+      }),
+      afterInitialInterview,
+    );
+    if (!plan01.approved) {
+      await writeLive(runnerDir, key, { stage: "01-plan", phase: "aborted", since: new Date().toISOString() });
+      await ev.runFinished(key, "aborted");
+      return;
     }
-    if (branch) {
-      const pr = await runCommand("gh", ["pr", "create", "--fill", "--head", branch], workDir);
-      deployOk = pr.ok;
-      deployOutput = pr.output;
+
+    // ── 02 Design ─────────────────────────────────────────────────────────────
+    const specResult = await runAndLog(
+      runnerDir,
+      key,
+      "02-spec",
+      `sdlc-spec 스킬을 사용해 ${docsIntent} 를 읽고 ${docsSpec} 를 작성하라. 정책 충돌은 해당 설계 항목 바로 아래 인라인으로 표시하라.`,
+      workDir,
+      ev,
+      config.pluginDir,
+      DOC_WRITE_TOOLS,
+    );
+    const design02 = await gateWithRework(
+      "02-design",
+      docsSpec,
+      async (latest) => ({
+        content: `${artifactWarning(latest, docsSpec)}02 Design 산출물: \`${relative(workDir, docsSpec)}\`\n\n${await readArtifactBody(docsSpec)}`,
+        hint: `"정책 충돌" 섹션을 각 정책 담당자와 정리한 뒤 진행 여부를 결정해 주세요.`,
+      }),
+      { sessionId: specResult.sessionId, latest: specResult },
+    );
+    if (!design02.approved) {
+      await writeLive(runnerDir, key, { stage: "02-design", phase: "aborted", since: new Date().toISOString() });
+      await ev.runFinished(key, "aborted");
+      return;
+    }
+
+    // ── 03 Build ──────────────────────────────────────────────────────────────
+    const planResult = await runAndLog(
+      runnerDir,
+      key,
+      "03-plan",
+      `sdlc-plan 스킬을 사용해 ${docsSpec} 를 읽고 ${docsPlan} 를 작성하라. "무엇이 깨질 수 있는가" 심문을 반드시 포함하라. 코드는 아직 수정하지 마라.`,
+      workDir,
+      ev,
+      config.pluginDir,
+      DOC_WRITE_TOOLS,
+    );
+    const build03 = await gateWithRework(
+      "03-build",
+      docsPlan,
+      async (latest) => ({
+        content: `${artifactWarning(latest, docsPlan)}03 Build 착수 계획: \`${relative(workDir, docsPlan)}\`\n\n${await readArtifactBody(docsPlan)}`,
+        hint: '변경할 파일 목록과 "무엇이 깨질 수 있는가"를 심문하고, 이대로 구현해도 되는지 판단해 주세요.\n승인 후에만 에이전트가 코드를 편집합니다.',
+      }),
+      { sessionId: planResult.sessionId, latest: planResult },
+      // This gate approves the *plan* (docsPlan, written by the 03-plan stage) before any code is
+      // touched — the rework session edits that same plan document, so it's "03-plan-rework", not
+      // "03-build-rework" (03-build itself only runs after this gate is approved).
+      "03-plan-rework",
+    );
+    if (!build03.approved) {
+      await writeLive(runnerDir, key, { stage: "03-build", phase: "aborted", since: new Date().toISOString() });
+      await ev.runFinished(key, "aborted");
+      return;
+    }
+
+    await runAndLog(
+      runnerDir,
+      key,
+      "03-build",
+      `승인된 ${docsPlan} 의 작업 목록을 순서대로 구현하라. 계획에 없는 파일은 건드리지 마라 — ` +
+        `plan-drift 훅이 커밋 시점에 계획과 실제 변경을 대조한다. 저장소의 CLAUDE.md와 .claude/CLAUDE.md 규칙을 따르라.`,
+      workDir,
+      ev,
+      config.pluginDir,
+    );
+
+    // ── 04 Test ───────────────────────────────────────────────────────────────
+    await runAndLog(
+      runnerDir,
+      key,
+      "04-test-loop",
+      `sdlc-test 스킬을 사용해 ${docsPlan} 의 "성공 기준"을 실제로 실행하고, 통과할 때까지 피드백 루프를 돌려라. ` +
+        `이건 버그 수정 작업일 수 있으니 테스트를 고쳐서 통과시키지 마라. 마지막에 verifier 서브에이전트로 독립 검증을 받아라.`,
+      workDir,
+      ev,
+      config.pluginDir,
+    );
+
+    const testCmd = await detectTestCommand(workDir);
+    const unitResult = testCmd ? await runCommand(testCmd[0], testCmd[1], workDir) : { ok: true, output: "no test command detected, skipped" };
+    const e2eResult = await runE2E(config.e2eDriver, config.demoAppUrl).catch((err: Error) => ({ ok: false, output: err.message }));
+    const testOk = unitResult.ok && e2eResult.ok;
+    await appendStateLog(runnerDir, key, {
+      stage: "04-test",
+      startedAt: new Date().toISOString(),
+      endedAt: new Date().toISOString(),
+      ok: testOk,
+      sessionJsonlPath: null,
+      note: `unit: ${unitResult.ok ? "ok" : "fail"}; e2e: ${e2eResult.ok ? "ok" : "fail"}`,
+    });
+    console.log(`[pipeline:${key}] 04-test ${testOk ? "ok" : "FAILED"}`);
+
+    const testSummary =
+      `04 Test 결과\n\n- 단위/빌드: ${unitResult.ok ? "통과" : "실패"}\n- e2e: ${e2eResult.ok ? "통과" : "실패"}\n\n` +
+      "```\n" +
+      (unitResult.output + "\n" + e2eResult.output).slice(-1500) +
+      "\n```";
+    // A rejection here means "do not ship this", not "throw the run away": 06 Maintain still runs
+    // below, records why, and — if the detection tier warrants it — opens the follow-up ticket that
+    // closes the loop. Gates 01–03 are different: rejecting those means the work itself was wrong,
+    // so the pipeline returns and there is nothing to maintain.
+    const testApproved = (
+      await gate("04-test", { content: testSummary, hint: "기계적 증거는 위에 붙였습니다. 의도와 리스크 관점에서 판단해 주세요." })
+    ).approved;
+
+    // ── 05 Deploy ─────────────────────────────────────────────────────────────
+    let deployOk = false;
+    let deployOutput = "";
+    let reviewNote = "";
+    if (testOk && testApproved) {
+      const reviewResult = await runAndLog(
+        runnerDir,
+        key,
+        "05-review",
+        `sdlc-review 스킬을 사용해 이 브랜치의 diff 를 Bugs/Security/Compliance 세 패스로 리뷰하라. ` +
+          `저장소 REVIEW.md 의 정책을 따르고, ${docsSpec} 의 요구사항 대비 준수 여부를 확인하라. 승인하지 마라 — 발견만 보고하라.`,
+        workDir,
+        ev,
+        config.pluginDir,
+        ["Read", "Glob", "Grep", "Bash(git diff *)", "Bash(git log *)", "Bash(git status)", "Skill"],
+      );
+      // The release manager needs to know whether a review actually happened. An unreported failed
+      // review session looks identical to a clean one at the gate.
+      if (!reviewResult.ok) {
+        reviewNote = `> ⚠️ sdlc-review 세션이 실패했습니다 (${reviewResult.error ?? (reviewResult.timedOut ? "타임아웃" : `exit ${reviewResult.exitCode}`)}). Bugs/Security/Compliance 리뷰 결과가 없습니다.\n\n`;
+      }
+      if (branch) {
+        const pr = await runCommand("gh", ["pr", "create", "--fill", "--head", branch], workDir);
+        deployOk = pr.ok;
+        deployOutput = pr.output;
+      } else {
+        deployOutput = "useWorktree=false: no dedicated branch, skipping PR creation";
+        deployOk = true;
+      }
     } else {
-      deployOutput = "useWorktree=false: no dedicated branch, skipping PR creation";
-      deployOk = true;
+      deployOutput = testOk ? "skipped: 04-test 게이트에서 사람이 승인하지 않음" : "skipped: 04-test failed";
     }
-  } else {
-    deployOutput = testOk ? "skipped: 04-test 게이트에서 사람이 승인하지 않음" : "skipped: 04-test failed";
+    await appendStateLog(runnerDir, key, {
+      stage: "05-deploy",
+      startedAt: new Date().toISOString(),
+      endedAt: new Date().toISOString(),
+      ok: deployOk,
+      sessionJsonlPath: null,
+      note: deployOutput.slice(0, 2000),
+    });
+    console.log(`[pipeline:${key}] 05-deploy ${deployOk ? "ok" : "FAILED"}`);
+
+    // Same rule as the 04 gate: the release manager declining is a decision about shipping, not a
+    // reason to skip maintenance. Only ask when there is actually something to release.
+    const releaseApproved = deployOk
+      ? (
+          await gate("05-deploy", {
+            content: `${reviewNote}05 Deploy: PR 준비 완료.\n\n\`\`\`\n${deployOutput.slice(0, 1200)}\n\`\`\``,
+            hint: "프로덕션 게이트는 `RELEASE_APPROVED=1` 없이는 훅이 차단합니다. 릴리스를 승인할지 판단해 주세요.",
+          })
+        ).approved
+      : false;
+
+    // ── 06 Maintain ───────────────────────────────────────────────────────────
+    const maintainResult = await runMaintain(
+      runnerDir,
+      key,
+      ticket,
+      config,
+      source,
+      repoRoot,
+      {
+        pipelineOk: testOk && deployOk && testApproved && releaseApproved,
+        e2eOk: e2eResult.ok,
+        summary: [
+          `04-test: ${testOk ? "ok" : "FAILED"} (unit ${unitResult.ok ? "ok" : "fail"}, e2e ${e2eResult.ok ? "ok" : "fail"}), 게이트 ${testApproved ? "승인" : "미승인"}`,
+          `05-deploy: ${deployOk ? "ok" : "FAILED"}, 게이트 ${releaseApproved ? "승인" : "미승인"}`,
+          "",
+          "unit/e2e output (truncated):",
+          (unitResult.output + "\n" + e2eResult.output).slice(0, 1500),
+        ].join("\n"),
+      },
+      ev,
+    );
+
+    await gate("06-maintain", {
+      content: maintainResult.content,
+      hint: "감지 결과와 후속 티켓 생성 여부를 확인하고 트리아지해 주세요 (지금 고칠지, 일정에 넣을지, 기각할지).",
+    });
+
+    // The pipeline always finishes normally from here — unlike the 01/02/03 gates, nothing after
+    // this point returns early, so "done" is unconditional regardless of how 06's gate resolved.
+    await writeLive(runnerDir, key, { stage: "06-maintain", phase: "done", since: new Date().toISOString() });
+    await ev.runFinished(key, "done");
+  } catch (err) {
+    // `ensureGateRef` (inside `gate()`) already did every abort side effect — runFinished("aborted"),
+    // the state log entry, the best-effort Linear comment — before throwing this. There's nothing
+    // left to do here except stop unwinding and let the run end quietly.
+    if (err instanceof PipelineAbortedError) return;
+    throw err;
   }
-  await appendStateLog(runnerDir, key, {
-    stage: "05-deploy",
-    startedAt: new Date().toISOString(),
-    endedAt: new Date().toISOString(),
-    ok: deployOk,
-    sessionJsonlPath: null,
-    note: deployOutput.slice(0, 2000),
-  });
-  console.log(`[pipeline:${key}] 05-deploy ${deployOk ? "ok" : "FAILED"}`);
-
-  // Same rule as the 04 gate: the release manager declining is a decision about shipping, not a
-  // reason to skip maintenance. Only ask when there is actually something to release.
-  const releaseApproved = deployOk
-    ? (
-        await gate(
-          "05-deploy",
-          `${reviewNote}05 Deploy: PR 준비 완료.\n\n\`\`\`\n${deployOutput.slice(0, 1200)}\n\`\`\`\n\n프로덕션 게이트는 \`RELEASE_APPROVED=1\` 없이는 훅이 차단합니다. 릴리스를 승인할지 판단해 주세요.`,
-        )
-      ).approved
-    : false;
-
-  // ── 06 Maintain ─────────────────────────────────────────────────────────────
-  await runMaintain(
-    runnerDir,
-    key,
-    ticket,
-    config,
-    source,
-    repoRoot,
-    {
-      pipelineOk: testOk && deployOk && testApproved && releaseApproved,
-      e2eOk: e2eResult.ok,
-      summary: [
-        `04-test: ${testOk ? "ok" : "FAILED"} (unit ${unitResult.ok ? "ok" : "fail"}, e2e ${e2eResult.ok ? "ok" : "fail"}), 게이트 ${testApproved ? "승인" : "미승인"}`,
-        `05-deploy: ${deployOk ? "ok" : "FAILED"}, 게이트 ${releaseApproved ? "승인" : "미승인"}`,
-        "",
-        "unit/e2e output (truncated):",
-        (unitResult.output + "\n" + e2eResult.output).slice(0, 1500),
-      ].join("\n"),
-    },
-    ev,
-  );
-
-  await gate("06-maintain", `06 Maintain 판정이 끝났습니다. 감지 결과와 후속 티켓 생성 여부를 확인하고 트리아지해 주세요 (지금 고칠지, 일정에 넣을지, 기각할지).`);
-
-  // The pipeline always finishes normally from here — unlike the 01/02/03 gates, nothing after
-  // this point returns early, so "done" is unconditional regardless of how 06's gate resolved.
-  await writeLive(runnerDir, key, { stage: "06-maintain", phase: "done", since: new Date().toISOString() });
-  await ev.runFinished(key, "done");
 }
 
 interface MaintainInput {
@@ -714,6 +757,11 @@ interface MaintainInput {
  * never the model — and only then does an agent get involved, at the authority the
  * tier allows: 2σ diagnoses read-only, 3σ may write an intent.md and open a ticket.
  */
+interface MaintainResult {
+  /** Shown verbatim at the 06 Maintain gate — the detection result the approver triages against. */
+  content: string;
+}
+
 async function runMaintain(
   runnerDir: string,
   key: string,
@@ -723,7 +771,7 @@ async function runMaintain(
   repoRoot: string,
   input: MaintainInput,
   events: PipelineEvents,
-): Promise<void> {
+): Promise<MaintainResult> {
   const detectScript = join(repoRoot, config.detectScript);
   const metricValue = input.e2eOk ? 0 : 1;
 
@@ -742,16 +790,19 @@ async function runMaintain(
 
   console.log(`[pipeline:${key}] 06-maintain detect: tier=${tier}\n${detectOutput.trim()}`);
 
+  const detectBlock = "```\n" + detectOutput.trim().slice(0, 1200) + "\n```";
+
   if (tier <= 1) {
+    const note = `tier=${tier} — 기록만 한다, 에이전트 미개입. ${detectOutput.trim().slice(0, 500)}`;
     await appendStateLog(runnerDir, key, {
       stage: "06-maintain",
       startedAt: new Date().toISOString(),
       endedAt: new Date().toISOString(),
       ok: true,
       sessionJsonlPath: null,
-      note: `tier=${tier} — 기록만 한다, 에이전트 미개입. ${detectOutput.trim().slice(0, 500)}`,
+      note,
     });
-    return;
+    return { content: `06 Maintain 감지 결과 (tier=${tier})\n\n${detectBlock}\n\n이상 없음 — 기록만 하고 에이전트는 개입하지 않았습니다.` };
   }
 
   if (tier === 2) {
@@ -766,7 +817,7 @@ async function runMaintain(
       config.pluginDir,
       ["Read", "Glob", "Grep", "Bash(git log *)", "Bash(git diff *)", "Skill"],
     );
-    return;
+    return { content: `06 Maintain 감지 결과 (tier=2)\n\n${detectBlock}\n\nread-only 진단을 실행했습니다. 세션 트랜스크립트에서 원인 진단을 확인해 주세요.` };
   }
 
   // tier 3 — the agent may act, but only by writing an intent.md and opening a ticket.
@@ -784,7 +835,9 @@ async function runMaintain(
       note: "tier=3 이지만 깊이 상한 도달 — 후속 티켓 억제, 사람에게 에스컬레이션",
     });
     console.log(`[pipeline:${key}] 06-maintain: depth limit reached, not creating a follow-up ticket`);
-    return;
+    return {
+      content: `06 Maintain 감지 결과 (tier=3)\n\n${detectBlock}\n\n자동 티켓 깊이 상한(${config.maxAutoTicketDepth})에 도달해 후속 티켓을 만들지 않았습니다. 사람이 직접 처리해야 합니다.`,
+    };
   }
 
   const depth = extractDepth(ticket) + 1;
@@ -837,4 +890,5 @@ async function runMaintain(
     sessionJsonlPath: null,
     note,
   });
+  return { content: `06 Maintain 감지 결과 (tier=3)\n\n${detectBlock}\n\n${note}` };
 }

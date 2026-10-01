@@ -116,12 +116,7 @@ for i, a in enumerate(argv):
     if a == "-p" and i + 1 < len(argv):
         prompt = argv[i + 1]
 for path in re.findall(r"/[\\w./-]+\\.(?:md|json)", prompt):
-    if path.endswith(".gates.json"):
-        stages = ["01-plan","02-design","03-build","04-test","05-deploy","06-maintain"]
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w") as f:
-            json.dump({s: {"issueId": "uuid-" + s, "key": "GATE-" + s, "url": "http://x/" + s} for s in stages}, f)
-    elif "/docs/" in path:
+    if "/docs/" in path:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         if not os.path.exists(path):
             open(path, "w").write("# stub artifact\\n\\n## 변경할 파일\\n- \`README.md\` (수정)\\n")
@@ -155,6 +150,13 @@ async function makeRepo(): Promise<string> {
   return root;
 }
 
+/** Derives a fake gate sub-issue from the `[gate] <stage> — 승인자: <role>` title the pipeline creates. */
+function fakeSubIssue(title: string): Ticket {
+  const stage = title.match(/\[gate\]\s+(\S+)/)?.[1] ?? "unknown";
+  return { id: `uuid-${stage}`, key: `GATE-${stage}`, title, body: "", labels: [], url: `http://x/${stage}` };
+}
+
+/** Used both for the autoApprove run (createSubIssue never called there) and the gated run (lazy creation IS exercised). */
 function fakeSource(): TicketSource {
   return {
     name: "fake",
@@ -169,9 +171,7 @@ function fakeSource(): TicketSource {
       url: "http://x/ENG-99",
     }),
     comment: async () => {},
-    createSubIssue: async () => {
-      throw new Error("not used under autoApprove");
-    },
+    createSubIssue: async (_parentId, t) => fakeSubIssue(t.title),
     getStateType: async (): Promise<StateType> => "completed",
     listComments: async (): Promise<IssueComment[]> => [],
     setStateType: async () => {},

@@ -56,7 +56,7 @@
    ✅ @minji 승인 — 다음 단계로 진행
 ```
 
-러너가 Slack 채널에 올리는 알림·진행·게이트 메시지의 실제 모양이다(캡처 전까지는 텍스트 예시). 같은 정보가 Linear 원 티켓 아래 게이트 하위 이슈 6개에도 남는다.
+러너가 Slack 스레드에 올리는 알림·진행·게이트 메시지의 실제 모양이다(캡처 전까지는 텍스트 예시). 같은 정보가 Linear 원 티켓 아래, 그 단계가 끝날 때마다 하나씩 생기는 게이트 카드에도 남는다.
 
 ---
 
@@ -241,12 +241,12 @@ npx ai-sdlc-runner init
 npx ai-sdlc-runner start
 ```
 
-설정·자격 증명을 읽어 기동한다. 설정이 아예 없으면 `init`부터 하라고 안내하고 종료 코드 1로 끝난다. `claude` 미설치·미로그인이나 Linear MCP 미연결처럼 막히는(blocking) 점검이 하나라도 실패하면 원인과 해결 명령을 출력하고 역시 종료 코드 1이다(`00 Setup`이 Linear MCP 없이는 못 돌기 때문). 점검을 건너뛰려면 `--skip-checks`를 붙인다. 통과하면 기동 로그에 웹훅 URL 또는 폴링 상태, 상태 파일 위치, Slack 연결 상태가 한 번에 찍힌다.
+설정·자격 증명을 읽어 기동한다. 설정이 아예 없으면 `init`부터 하라고 안내하고 종료 코드 1로 끝난다. `claude` 미설치·미로그인이나 토큰 검증 실패처럼 막히는(blocking) 점검이 하나라도 실패하면 원인과 해결 명령을 출력하고 역시 종료 코드 1이다. Linear MCP 미연결은 경고(⚠️)일 뿐 시작을 막지 않는다 — 게이트 하위 이슈는 Linear API로 만들어지고, MCP는 06 Maintain의 후속 티켓 생성에서만 우선 쓰이며 연결이 없으면 API로 대체된다. 점검을 건너뛰려면 `--skip-checks`를 붙인다. 통과하면 기동 로그에 웹훅 URL 또는 폴링 상태, 상태 파일 위치, Slack 연결 상태가 한 번에 찍힌다.
 
 ### 티켓 하나 흘려 보내기
 
 1. `curl -s localhost:3939/health`로 러너가 떠 있는지 확인한다.
-2. Linear에 티켓을 만든다. `00 Setup`이 돌고, 원 티켓 아래에 `[gate] 01-plan — 승인자: Product Owner`부터 `06-maintain`까지 하위 이슈 6개가 생긴다.
+2. Linear에 티켓을 만든다. 01 Plan이 끝나면 원 티켓 아래에 `[gate] 01-plan — 승인자: Product Owner` 하위 이슈가 하나 생긴다 — 나머지(`02-design`부터 `06-maintain`까지)는 미리 만들어지지 않고, 각 단계가 끝날 때마다 그 단계의 카드가 하나씩 생긴다.
 3. 단계가 끝날 때마다 해당 게이트 카드에 요약 코멘트가 달린다. 산출물을 보고 카드를 옮긴다.
 
 | 게이트 카드를 | 러너 동작 |
@@ -289,7 +289,7 @@ npx ai-sdlc-runner start
 | `/sdlc status` | 진행 중인 실행과 각 실행의 현재 단계·대기 역할 (나에게만 보임) |
 | `/sdlc help` | 명령 사용법 (나에게만 보임) |
 | 단계 진행 | 티켓 스레드에 `⏳ 01 Plan 실행 중` → `✅ 01 Plan 완료 (4분)` |
-| 게이트 열림 | 스레드에 승인 역할 멘션 + 요약 + `[✅ 승인]` `[⛔ 반려]`, 채널에도 한 번 더 보임 |
+| 게이트 열림 | 스레드에 승인 역할 멘션 + 산출물 본문(Markdown으로 렌더링, 길면 잘라내고 전체는 Linear 게이트 카드 코멘트로) + "검토하신 뒤 승인 또는 반려해 주세요." + `[✅ 승인]` `[⛔ 반려]`. 채널에는 새 티켓 알림만 올라가고, 이후 진행·게이트는 전부 그 티켓 스레드 안에만 남는다 |
 
 러너를 처음 켤 때 최근 24시간 안에 생긴 아직 실행되지 않은 `sdlc-auto` 티켓도 알립니다. 사람이 만든 티켓은 켠 뒤에 생긴 것만 알립니다.
 
@@ -376,9 +376,10 @@ Linear → Settings → API → Webhooks에서 `<터널 주소>/webhook/linear`�
 
 ## 단계별로 무엇이 일어나나
 
+자동 모드에서는 "00 Setup"으로 게이트 카드를 미리 만들어 두지 않는다 — 각 단계가 끝날 때마다 러너가 그 단계의 게이트 카드(`[gate] <단계> — 승인자: <역할>`)를 Linear API로 하나씩 만든다. 카드를 못 만들면 러너는 승인 없이 넘어가지 않고 그 자리에서 멈춘다.
+
 | 단계 | 산출물 | 승인자 | 막는 장치 (hook) |
 | --- | --- | --- | --- |
-| `00 Setup` (자동 모드만) | Linear 게이트 하위 이슈 6개 | — | 게이트가 안 만들어지면 러너가 멈춘다 |
 | `01 Plan` | `docs/intent/<키>.md` | Product Owner | — |
 | `02 Design` | `docs/spec/<키>.md` | Product Owner | — |
 | `03 Build` | `docs/plan/<키>.md`, 코드 | Engineer | `plan-drift` `guard-protected-paths` `block-secrets` `format-lint` |
@@ -451,7 +452,7 @@ Linear → Settings → API → Webhooks에서 `<터널 주소>/webhook/linear`�
 | 티켓을 만들어도 파이프라인이 시작되지 않는다(webhook 모드) | 터널이 살아 있는지, webhook URL이 `/webhook/linear`로 끝나는지 확인한다. 서명이 틀리면 러너 로그에 401이 찍힌다 |
 | Slack 봇 초대 없이 채널에 알림이 안 온다(`not_in_channel`) | 알림을 보낼 채널에 `/invite @AI-SDLC`로 봇을 초대했는지 확인한다 |
 | Slack 버튼을 눌러도 반응이 없다 | 러너가 떠 있는지(`curl -s localhost:3939/health`) 확인하고, Socket Mode 연결이 끊기지 않았는지 로그를 본다. 끊긴 동안에도 Linear 카드를 직접 옮기면 승인은 그대로 된다 |
-| `no approval-gate map` 으로 멈춘다 | `00 Setup`이 Linear MCP로 하위 이슈를 못 만든 것이다. Claude Code에서 `/mcp`로 Linear 연결을 확인한다 |
+| 게이트 카드를 못 만들어 멈춘다 | 러너가 Linear API로 그 단계의 게이트 카드를 만들지 못한 것이다. `LINEAR_API_KEY`와 `linearTeamId`를 `doctor`/`config`로 확인한다 |
 | 승인했는데 다음 단계로 안 간다 | 카드가 Done 계열 상태(`completed`)인지 확인한다. 팀 워크플로에 Done과 Canceled가 있어야 한다 |
 | 03에서 커밋이 막힌다 | `plan-drift`가 계획 밖 파일을 막은 것이다. `plan.md`를 고쳐 다시 승인받거나 변경을 되돌린다 |
 | 06이 판정을 못 한다 | `ops/detect.sh`가 없으면 파이프라인 성공 여부로 대신 판정한다. `python3 -c "import yaml"`이 되는지 확인한다 |

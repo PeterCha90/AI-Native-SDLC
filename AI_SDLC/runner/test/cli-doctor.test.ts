@@ -68,7 +68,7 @@ test("claude not logged in is a blocking failure", async () => {
   assert.equal(check!.blocking, true);
 });
 
-test("missing linear entirely in mcp list is a blocking failure", async () => {
+test("missing linear entirely in mcp list is a non-blocking warning (06 Maintain falls back to the API)", async () => {
   const exec = greenExec({
     "claude mcp": { code: 0, stdout: "github: https://api.githubcopilot.com/mcp (HTTP) - ✔ Connected", stderr: "" },
   });
@@ -76,10 +76,11 @@ test("missing linear entirely in mcp list is a blocking failure", async () => {
   const check = checks.find((c) => c.name === "Linear MCP 연결");
   assert.ok(check);
   assert.equal(check!.ok, false);
-  assert.equal(check!.blocking, true);
+  assert.equal(check!.blocking, false);
   // `claude mcp list`만 보고는 다른 폴더의 local/project 범위 서버를 알 수 없다는 점과, 정확한
   // 추가 명령을 detail/fix에 남긴다.
   assert.match(check!.detail, /현재 폴더에서 보이는 서버만/);
+  assert.match(check!.detail, /06 Maintain/);
   assert.match(check!.fix ?? "", /claude mcp add --scope user --transport http linear https:\/\/mcp\.linear\.app\/mcp/);
   assert.match(check!.fix ?? "", /\/mcp/);
 });
@@ -95,7 +96,7 @@ test("linear connected (✔ Connected) is not blocking", async () => {
   assert.equal(check!.blocking, false);
 });
 
-test("linear failed to connect (✗ Failed to connect) is blocking", async () => {
+test("linear failed to connect (✗ Failed to connect) is a non-blocking warning", async () => {
   const exec = greenExec({
     "claude mcp": { code: 0, stdout: "linear: https://mcp.linear.app/mcp (HTTP) - ✗ Failed to connect", stderr: "" },
   });
@@ -103,10 +104,10 @@ test("linear failed to connect (✗ Failed to connect) is blocking", async () =>
   const check = checks.find((c) => c.name === "Linear MCP 연결");
   assert.ok(check);
   assert.equal(check!.ok, false);
-  assert.equal(check!.blocking, true);
+  assert.equal(check!.blocking, false);
 });
 
-test("linear needs authentication (⚠ Needs authentication) is blocking with an auth fix hint", async () => {
+test("linear needs authentication (⚠ Needs authentication) is a non-blocking warning with an auth fix hint", async () => {
   const exec = greenExec({
     "claude mcp": { code: 0, stdout: "linear: https://mcp.linear.app/mcp (HTTP) - ⚠ Needs authentication", stderr: "" },
   });
@@ -114,7 +115,7 @@ test("linear needs authentication (⚠ Needs authentication) is blocking with an
   const check = checks.find((c) => c.name === "Linear MCP 연결");
   assert.ok(check);
   assert.equal(check!.ok, false);
-  assert.equal(check!.blocking, true);
+  assert.equal(check!.blocking, false);
   assert.match(check!.fix ?? "", /mcp/i);
 });
 
@@ -131,7 +132,7 @@ test("a linear line for another server (e.g. 'my-linear-clone') doesn't false-po
   const check = checks.find((c) => c.name === "Linear MCP 연결");
   assert.ok(check);
   assert.equal(check!.ok, false);
-  assert.equal(check!.blocking, true);
+  assert.equal(check!.blocking, false);
 });
 
 test("ego-browser ready (cliLog(\"ok\") echoes back without onboarding) is ✅", async () => {

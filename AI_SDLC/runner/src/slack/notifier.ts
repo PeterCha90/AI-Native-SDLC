@@ -5,7 +5,7 @@
 // See docs/superpowers/specs/2026-10-01-sdlc-slack-bot-design.md §3.1, §4.1, §4.3.
 
 import type { PipelineEvents } from "../events.ts";
-import type { GateRef, StageId } from "../gate.ts";
+import { readGateMap, type GateRef, type StageId } from "../gate.ts";
 import type { RunMeta } from "../state.ts";
 import type { RecentIssue } from "../adapters/types.ts";
 import { ticketNotice, stageLine, gateMessage, followupLine, runFinishedLine } from "./blocks.ts";
@@ -23,9 +23,20 @@ export interface SlackNotifierOptions {
   client: SlackClientLike;
   channel: string;
   stateDir: string;
+  /** Parent of `.state/` — needed to re-read the gate map for the real card url on gateResolved/stageReworking. */
+  runnerDir: string;
   roleGroups: Record<string, string>;
   /** Role name → Slack user IDs allowed to act on that role's gates. Defaults to {}. */
   roleUsers?: Record<string, string[]>;
+}
+
+/** Best-effort: a missing/corrupt gate map must never break a status update, only lose its link. */
+async function lookupGateUrl(runnerDir: string, key: string, stage: StageId): Promise<string> {
+  try {
+    return (await readGateMap(runnerDir, key))[stage]?.url ?? "";
+  } catch {
+    return "";
+  }
 }
 
 function simpleMsg(text: string): { text: string; blocks: unknown[] } {
@@ -48,7 +59,7 @@ export function createSlackNotifier(
     postTicketNotice(t: RecentIssue, state: "new" | "auto"): Promise<void>;
     markStarted(key: string, by: string): Promise<void>;
   } {
-  const { client, channel, stateDir, roleGroups } = o;
+  const { client, channel, stateDir, runnerDir, roleGroups } = o;
   const roleUsers = o.roleUsers ?? {};
 
   async function ensureThread(key: string, fallbackText: string): Promise<ThreadRecord> {
@@ -108,7 +119,15 @@ export function createSlackNotifier(
       await writeThread(stateDir, key, rec);
     },
 
-    async gateWaiting(key: string, stage: StageId, role: string, gate: GateRef, summary: string): Promise<void> {
+    async gateWaiting(
+      key: string,
+      stage: StageId,
+      role: string,
+      gate: GateRef,
+      summary: string,
+      content?: string,
+      hint?: string,
+    ): Promise<void> {
       const rec = await ensureThread(key, `🆕 ${key}`);
       // A rework round reopens this same stage's gate under the same stage id — clear any stale
       // "who resolved it" marker from a previous round before posting the new wait message, or
@@ -126,13 +145,19 @@ export function createSlackNotifier(
         roleGroupId: roleGroups[role],
         roleUserIds: roleUsers[role],
         summary,
+        content,
+        hint,
         gateUrl: gate.url,
         state: "waiting",
       });
+      // No reply_broadcast — a gate post (and its later "✅ 승인"/"⛔ 반려" updates) stays inside
+      // the ticket thread. Broadcasting it into the channel would also echo as "스레드에 댓글
+      // 남김: ..." for every gate wait and every rework round, on top of the thread message
+      // itself. Only the ticket notice (the thread root, posted by postTicketNotice) is meant to
+      // be a channel-visible message.
       const posted = await client.chat.postMessage({
         channel: rec.channel,
         thread_ts: rec.threadTs,
-        reply_broadcast: true,
         text: msg.text,
         blocks: msg.blocks,
       });
@@ -149,13 +174,15 @@ export function createSlackNotifier(
       if (rec.gateResolvedBy[stage]) return;
       const ts = rec.gateTs[stage];
       if (!ts) return; // no gate message was ever posted for this stage — nothing to update.
+      // The card is reused, not recreated, so its url is still the one in gates.json.
+      const gateUrl = await lookupGateUrl(runnerDir, key, stage);
       const msg = gateMessage({
         key,
         ticketId: rec.ticketId,
         stage,
         role: "",
         summary: "(Linear에서 처리되었습니다)",
-        gateUrl: "",
+        gateUrl,
         state: approved ? "approved" : "rejected",
         by: approved ? "Linear" : undefined,
         reason,
@@ -168,13 +195,16 @@ export function createSlackNotifier(
       if (!rec) return;
       const ts = rec.gateTs[stage];
       if (!ts) return; // no gate message on record — nothing to update (e.g. runner restarted mid-gate).
+      // The rework reuses the SAME gate card (moved back to "unstarted") — its url is already in
+      // gates.json from when it was first created, so the re-opened message still links to it.
+      const gateUrl = await lookupGateUrl(runnerDir, key, stage);
       const msg = gateMessage({
         key,
         ticketId: rec.ticketId,
         stage,
         role: "",
         summary: "(재작업을 준비하고 있습니다)",
-        gateUrl: "",
+        gateUrl,
         state: "rejected",
         reason,
         rework: { attempt, maxAttempts },

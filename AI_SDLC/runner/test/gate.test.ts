@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { awaitApproval, classifyState, parseGateMap, readGateMap, STAGES, type GateRef } from "../src/gate.ts";
+import { awaitApproval, classifyState, parseGateMap, readGateMap, writeGateMap, STAGES, type GateRef } from "../src/gate.ts";
 import type { IssueComment, StateType, TicketSource } from "../src/adapters/types.ts";
 
 const GATE: GateRef = { issueId: "uuid-1", key: "ENG-43", url: "https://linear.app/x/issue/ENG-43" };
@@ -59,16 +59,24 @@ test("classifyState maps Linear workflow state types onto gate verdicts", () => 
 
 test("parseGateMap accepts a complete map and normalises missing key/url", () => {
   const map = parseGateMap(fullGateMapJson());
-  assert.equal(map["01-plan"].issueId, "uuid-01-plan");
+  assert.equal(map["01-plan"]?.issueId, "uuid-01-plan");
   assert.equal(Object.keys(map).length, STAGES.length);
 });
 
-test("parseGateMap rejects a map that is missing a stage", () => {
+test("parseGateMap accepts a partial map, leaving stages with no entry absent (lazy creation)", () => {
   const partial = JSON.stringify({ "01-plan": { issueId: "a" } });
-  assert.throws(() => parseGateMap(partial), /missing an entry for stage "02-design"/);
+  const map = parseGateMap(partial);
+  assert.equal(map["01-plan"]?.issueId, "a");
+  assert.equal(map["02-design"], undefined);
+  assert.equal(Object.keys(map).length, 1);
 });
 
-test("parseGateMap rejects an entry with no issueId", () => {
+test("parseGateMap accepts a completely empty map", () => {
+  const map = parseGateMap("{}");
+  assert.deepEqual(map, {});
+});
+
+test("parseGateMap rejects a present entry with no issueId", () => {
   const bad = JSON.parse(fullGateMapJson());
   bad["04-test"] = { key: "ENG-46" };
   assert.throws(() => parseGateMap(JSON.stringify(bad)), /"04-test" has no issueId/);
@@ -78,17 +86,43 @@ test("parseGateMap rejects malformed JSON rather than returning an empty map", (
   assert.throws(() => parseGateMap("{nope"), /not valid JSON/);
 });
 
-test("readGateMap refuses to run ungated when 00-setup produced no map", async () => {
+test("readGateMap starts empty when no gates.json exists yet (lazy creation, not 00-setup)", async () => {
   const dir = await mkdtemp(join(tmpdir(), "sdlc-gate-"));
-  await assert.rejects(readGateMap(dir, "ENG-1"), /Refusing to run the pipeline ungated/);
+  const map = await readGateMap(dir, "ENG-1");
+  assert.deepEqual(map, {});
 });
 
-test("readGateMap loads the map 00-setup wrote", async () => {
+test("readGateMap throws loudly on a corrupt gates.json rather than treating it as empty", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "sdlc-gate-"));
+  await mkdir(join(dir, ".state"), { recursive: true });
+  await writeFile(join(dir, ".state", "ENG-1.gates.json"), "{not valid json");
+  await assert.rejects(readGateMap(dir, "ENG-1"), /not valid JSON/);
+});
+
+test("readGateMap loads a complete map from disk", async () => {
   const dir = await mkdtemp(join(tmpdir(), "sdlc-gate-"));
   await mkdir(join(dir, ".state"), { recursive: true });
   await writeFile(join(dir, ".state", "ENG-1.gates.json"), fullGateMapJson());
   const map = await readGateMap(dir, "ENG-1");
-  assert.equal(map["06-maintain"].issueId, "uuid-06-maintain");
+  assert.equal(map["06-maintain"]?.issueId, "uuid-06-maintain");
+});
+
+test("writeGateMap then readGateMap round-trips a partial map, and is atomic (no half-written file left behind)", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "sdlc-gate-"));
+  await writeGateMap(dir, "ENG-1", { "01-plan": { issueId: "uuid-1", key: "GATE-1", url: "http://x/1" } });
+  const map = await readGateMap(dir, "ENG-1");
+  assert.deepEqual(map, { "01-plan": { issueId: "uuid-1", key: "GATE-1", url: "http://x/1" } });
+
+  // Writing again (simulating the next stage's gate being created) must not leave a .tmp-* file
+  // behind, and must fully replace the previous content.
+  await writeGateMap(dir, "ENG-1", {
+    "01-plan": { issueId: "uuid-1", key: "GATE-1", url: "http://x/1" },
+    "02-design": { issueId: "uuid-2", key: "GATE-2", url: "http://x/2" },
+  });
+  const files = await (await import("node:fs/promises")).readdir(join(dir, ".state"));
+  assert.ok(!files.some((f) => f.includes(".tmp-")), `no temp file should remain: ${files.join(", ")}`);
+  const map2 = await readGateMap(dir, "ENG-1");
+  assert.equal(Object.keys(map2).length, 2);
 });
 
 test("awaitApproval waits through pending states and returns approved on Done", async () => {
