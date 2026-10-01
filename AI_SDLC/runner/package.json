@@ -1,7 +1,7 @@
 {
   "name": "ai-sdlc-runner",
   "version": "0.4.0",
-  "description": "Local runner that turns a Linear ticket into a 6-stage AI-SDLC pipeline of headless `claude -p` sessions, with a Slack bot front end. Install with `npx ai-sdlc-runner init` — no clone, no manual env exports.",
+  "description": "Linear 티켓을 6단계 AI-native SDLC 파이프라인(claude -p)으로 돌리고, 단계별 승인을 Slack 봇으로 받는 러너. npx ai-sdlc-runner init 으로 설정한다.",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -37,5 +37,19 @@
   "dependencies": {
     "@clack/prompts": "^1.8.1",
     "@slack/bolt": "^5.1.0"
+  },
+  "homepage": "https://github.com/PeterCha90/FastCampus/tree/main/AI_SDLC/runner#readme",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "sdlc",
+    "ai-native",
+    "slack-bot",
+    "linear",
+    "agent",
+    "pipeline"
+  ],
+  "bugs": {
+    "url": "https://github.com/PeterCha90/FastCampus/issues"
   }
 }
