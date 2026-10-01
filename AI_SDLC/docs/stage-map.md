@@ -132,7 +132,7 @@ bash todo-app/ops/detect.sh --metric e2e_failure_rate --value 0.5         # tier
 **헤드리스(러너)** — 모든 단계가 `--plugin-dir <AI_SDLC/plugin>`으로 실행된다. `runner/src/claude.ts` 참조.
 
 **대화형(사람이 직접)** — 이 예시 앱은 `.claude/`를 저장소에 커밋해 두지 않는다. 플러그인을 설치하면서
-(`claude plugin marketplace add PeterCha90/FastCampus` + `claude plugin install ai-native-sdlc@ai-sdlc`, 또는
+(`claude plugin marketplace add PeterCha90/AI-Native-SDLC` + `claude plugin install ai-native-sdlc@ai-sdlc`, 또는
 `todo-app/` 안에서 `--scope project`로 설치) `todo-app/.claude/settings.json`을 만들면, 그 파일이
 `AI_SDLC/.claude-plugin/marketplace.json`을 로컬 마켓플레이스로 등록하고 플러그인을 활성화한다. 그 뒤
 `todo-app/`에서 `claude`를 띄우면 스킬·훅·서브에이전트가 그대로 붙는다.

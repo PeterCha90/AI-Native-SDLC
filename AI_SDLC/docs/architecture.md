@@ -55,7 +55,7 @@ Linear 티켓이 들어오면 `00 setup`이 승인 게이트용 Linear 하위 �
 
 04 test 실패는 05 deploy를 건너뛰고 바로 06 maintain으로 넘어간다(위 다이어그램의 "실패" 화살표). 05 deploy에서 PR 생성 자체가 실패해도(`useWorktree=false`가 아닌 한) 게이트를 열지 않고 곧장 06으로 넘어간다. 어느 경로든 신규 티켓은 같은 `createTicket()` 한 곳으로 모인다.
 
-파이프라인은 헤드리스 세션마다 `--plugin-dir`로 플러그인을 명시적으로 로드한다. 사람이 `todo-app/` 안에서 대화형 Claude Code를 직접 열 때 같은 플러그인을 붙이려면 별도로 설치해야 한다 — 이 예시 앱은 `.claude/`를 저장소에 커밋해 두지 않는다("생성하는 재미"를 위해 각자 만들어 보게 한 것이다). `claude plugin marketplace add PeterCha90/FastCampus` + `claude plugin install ai-native-sdlc@ai-sdlc`로 설치하거나, `todo-app/` 안에서 `--scope project`를 붙여 설치하면 `todo-app/.claude/settings.json`이 로컬 마켓플레이스 `ai-sdlc-local`(`AI_SDLC/.claude-plugin/marketplace.json`, source kind `directory`, path `..`)을 통해 `ai-native-sdlc` 플러그인을 활성화하도록 써진다. 그다음 `todo-app/`에서 `/sdlc-init`을 실행하면 `.claude/CLAUDE.md`(및 없으면 `REVIEW.md`·`ops/` 파일)가 생긴다. 그 뒤로는 수동 개입에도 헤드리스 세션과 동일한 skills/hooks가 걸린다.
+파이프라인은 헤드리스 세션마다 `--plugin-dir`로 플러그인을 명시적으로 로드한다. 사람이 `todo-app/` 안에서 대화형 Claude Code를 직접 열 때 같은 플러그인을 붙이려면 별도로 설치해야 한다 — 이 예시 앱은 `.claude/`를 저장소에 커밋해 두지 않는다("생성하는 재미"를 위해 각자 만들어 보게 한 것이다). `claude plugin marketplace add PeterCha90/AI-Native-SDLC` + `claude plugin install ai-native-sdlc@ai-sdlc`로 설치하거나, `todo-app/` 안에서 `--scope project`를 붙여 설치하면 `todo-app/.claude/settings.json`이 로컬 마켓플레이스 `ai-sdlc-local`(`AI_SDLC/.claude-plugin/marketplace.json`, source kind `directory`, path `..`)을 통해 `ai-native-sdlc` 플러그인을 활성화하도록 써진다. 그다음 `todo-app/`에서 `/sdlc-init`을 실행하면 `.claude/CLAUDE.md`(및 없으면 `REVIEW.md`·`ops/` 파일)가 생긴다. 그 뒤로는 수동 개입에도 헤드리스 세션과 동일한 skills/hooks가 걸린다.
 
 ## 2. 승인 게이트 프로토콜
 

@@ -39,7 +39,7 @@
 플러그인을 설치하고, 내 저장소를 준비하고, 티켓 하나를 넘기면 된다:
 
 ```bash
-claude plugin marketplace add PeterCha90/FastCampus
+claude plugin marketplace add PeterCha90/AI-Native-SDLC
 claude plugin install ai-native-sdlc@ai-sdlc
 ```
 

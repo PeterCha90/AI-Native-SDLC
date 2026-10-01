@@ -44,7 +44,7 @@
 **권장 — CLI 두 줄** (클론 불필요):
 
 ```bash
-claude plugin marketplace add PeterCha90/FastCampus
+claude plugin marketplace add PeterCha90/AI-Native-SDLC
 claude plugin install ai-native-sdlc@ai-sdlc     # 팀 공유는 --scope project
 ```
 

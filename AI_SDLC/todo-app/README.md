@@ -10,7 +10,7 @@ AI-SDLC 파이프라인이 실제로 돌아가는 대상 앱이다. 러너(`../r
 이 예시 앱은 `.claude/`를 저장소에 커밋해 두지 않는다 — 클론한 사람이 직접 만들어 보게 한 것이다("생성하는
 재미"). 파이프라인이 이 폴더에서 실제로 걸리는 걸 보려면 먼저 아래를 한다.
 
-1. 플러그인을 설치한다: `claude plugin marketplace add PeterCha90/FastCampus && claude plugin install ai-native-sdlc@ai-sdlc`
+1. 플러그인을 설치한다: `claude plugin marketplace add PeterCha90/AI-Native-SDLC && claude plugin install ai-native-sdlc@ai-sdlc`
    (또는 이 폴더 안에서 `--scope project`를 붙이면 `.claude/settings.json`까지 CLI가 바로 써준다)
 2. `cd AI_SDLC/todo-app`에서 Claude Code를 열고 `/sdlc-init`을 실행한다 — 없으면 `.claude/CLAUDE.md`·
    `REVIEW.md`·`ops/bands.yaml`·`ops/detect.sh`를 만든다(이미 있는 파일은 건드리지 않는다).

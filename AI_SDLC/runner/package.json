@@ -1,12 +1,12 @@
 {
   "name": "ai-sdlc-runner",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Linear 티켓을 6단계 AI-native SDLC 파이프라인(claude -p)으로 돌리고, 단계별 승인을 Slack 봇으로 받는 러너. npx ai-sdlc-runner init 으로 설정한다.",
   "type": "module",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "github:PeterCha90/FastCampus",
+    "url": "git+https://github.com/PeterCha90/AI-Native-SDLC.git",
     "directory": "AI_SDLC/runner"
   },
   "bin": {
@@ -38,7 +38,7 @@
     "@clack/prompts": "^1.8.1",
     "@slack/bolt": "^5.1.0"
   },
-  "homepage": "https://github.com/PeterCha90/FastCampus/tree/main/AI_SDLC/runner#readme",
+  "homepage": "https://github.com/PeterCha90/AI-Native-SDLC/tree/main/AI_SDLC/runner#readme",
   "keywords": [
     "claude",
     "claude-code",
@@ -50,6 +50,6 @@
     "pipeline"
   ],
   "bugs": {
-    "url": "https://github.com/PeterCha90/FastCampus/issues"
+    "url": "https://github.com/PeterCha90/AI-Native-SDLC/issues"
   }
 }

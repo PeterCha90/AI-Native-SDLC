@@ -11,7 +11,7 @@
 **권장 — CLI로 설치** (GitHub 저장소를 마켓플레이스로 등록):
 
 ```bash
-claude plugin marketplace add PeterCha90/FastCampus
+claude plugin marketplace add PeterCha90/AI-Native-SDLC
 claude plugin install ai-native-sdlc@ai-sdlc     # --scope project|local 로 범위 지정
 ```
 
