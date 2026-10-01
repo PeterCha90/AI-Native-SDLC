@@ -74,6 +74,20 @@ function context(text: string): unknown {
   return { type: "context", elements: [{ type: "mrkdwn", text }] };
 }
 
+/**
+ * Builds the Slack mrkdwn mention for whoever may act on a gate: the user-group subteam
+ * mention (if a group is mapped), the specific people mentions (if any are listed), or both
+ * joined with " 또는 " — used both in `gateMessage`'s "승인이 필요합니다" header and in the
+ * denial text a non-approver sees when they press the button anyway. Returns "" when neither
+ * is set, so callers fall back to the bare role name.
+ */
+export function formatApprovers(groupId?: string, userIds?: string[]): string {
+  const parts: string[] = [];
+  if (groupId) parts.push(`<!subteam^${groupId}>`);
+  if (userIds && userIds.length > 0) parts.push(userIds.map((id) => `<@${id}>`).join(", "));
+  return parts.join(" 또는 ");
+}
+
 export function ticketNotice(
   t: { key: string; title: string; url: string; creator?: string; labels: string[]; ticketId: string },
   o: { state: "new" | "started" | "ignored" | "auto"; by?: string; parentKey?: string; depth?: number },
@@ -173,6 +187,7 @@ export function gateMessage(g: {
   stage: StageId;
   role: string;
   roleGroupId?: string;
+  roleUserIds?: string[];
   summary: string;
   gateUrl: string;
   state: "waiting" | "approved" | "rejected" | "timeout";
@@ -186,7 +201,7 @@ export function gateMessage(g: {
 
   switch (g.state) {
     case "waiting": {
-      const mention = g.roleGroupId ? `<!subteam^${g.roleGroupId}>` : escapeMrkdwn(g.role);
+      const mention = formatApprovers(g.roleGroupId, g.roleUserIds) || escapeMrkdwn(g.role);
       headerText = `🔔 ${mention} 승인이 필요합니다 — ${label}`;
       break;
     }

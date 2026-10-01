@@ -149,6 +149,65 @@ test("verifier.userGroups returns an empty list on failure", async () => {
   assert.deepEqual(result, []);
 });
 
+test("verifier.users maps members, excluding deleted, bots, and USLACKBOT", async () => {
+  const fakeFetch = (async () => ({
+    json: async () => ({
+      ok: true,
+      members: [
+        { id: "U1", name: "alice", deleted: false, is_bot: false, profile: { real_name: "Alice Kim" } },
+        { id: "U2", name: "deleted-user", deleted: true, is_bot: false, profile: { real_name: "Gone" } },
+        { id: "B1", name: "botty", deleted: false, is_bot: true, profile: { real_name: "Bot" } },
+        { id: "USLACKBOT", name: "slackbot", deleted: false, is_bot: false, profile: { real_name: "Slackbot" } },
+      ],
+      response_metadata: { next_cursor: "" },
+    }),
+  })) as unknown as typeof fetch;
+  const verifier = createVerifier(fakeFetch);
+  const result = await verifier.users("xoxb-abc");
+  assert.deepEqual(result, [{ id: "U1", name: "alice", realName: "Alice Kim" }]);
+});
+
+test("verifier.users paginates via cursor until next_cursor is empty", async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  const fakeFetch = (async (_url: string, init: any) => {
+    const body = JSON.parse(init.body);
+    calls.push(body);
+    if (!body.cursor) {
+      return {
+        json: async () => ({
+          ok: true,
+          members: [{ id: "U1", name: "alice", deleted: false, is_bot: false, profile: { real_name: "Alice" } }],
+          response_metadata: { next_cursor: "page2" },
+        }),
+      } as Response;
+    }
+    return {
+      json: async () => ({
+        ok: true,
+        members: [{ id: "U2", name: "bob", deleted: false, is_bot: false, profile: { real_name: "Bob" } }],
+        response_metadata: { next_cursor: "" },
+      }),
+    } as Response;
+  }) as typeof fetch;
+  const verifier = createVerifier(fakeFetch);
+  const result = await verifier.users("xoxb-abc");
+  assert.deepEqual(result, [
+    { id: "U1", name: "alice", realName: "Alice" },
+    { id: "U2", name: "bob", realName: "Bob" },
+  ]);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].limit, 200);
+  assert.equal(calls[0].cursor, undefined);
+  assert.equal(calls[1].cursor, "page2");
+});
+
+test("verifier.users returns an empty list on failure", async () => {
+  const fakeFetch = (async () => ({ json: async () => ({ ok: false, error: "missing_scope" }) })) as unknown as typeof fetch;
+  const verifier = createVerifier(fakeFetch);
+  const result = await verifier.users("xoxb-abc");
+  assert.deepEqual(result, []);
+});
+
 test("verifier.linear maps viewer and teams", async () => {
   const fakeFetch = (async (url: string, init: any) => {
     assert.equal(url, "https://api.linear.app/graphql");
@@ -180,6 +239,7 @@ test("a rejecting fetch never throws — every verifier method returns network_e
   assert.deepEqual(await verifier.postTest("xoxb-a", "C1"), { ok: false, error: ERROR_NETWORK });
   assert.deepEqual(await verifier.linear("lin_api_a"), { ok: false, error: ERROR_NETWORK });
   assert.deepEqual(await verifier.userGroups("xoxb-a"), []);
+  assert.deepEqual(await verifier.users("xoxb-a"), []);
 });
 
 test("userGroups logs the network error instead of swallowing it silently", async () => {
@@ -206,6 +266,7 @@ test("a non-JSON response body never throws — every verifier method returns in
   assert.deepEqual(await verifier.postTest("xoxb-a", "C1"), { ok: false, error: ERROR_INVALID_RESPONSE });
   assert.deepEqual(await verifier.linear("lin_api_a"), { ok: false, error: ERROR_INVALID_RESPONSE });
   assert.deepEqual(await verifier.userGroups("xoxb-a"), []);
+  assert.deepEqual(await verifier.users("xoxb-a"), []);
 });
 
 test("verifier.linear treats a well-formed but empty JSON body as invalid_response, not a throw", async () => {

@@ -31,6 +31,9 @@ const clackPrompter: Prompter = {
   // concrete type; against our generic `Prompter.select<T>`, TS can't distribute it, so the call
   // is routed through `any` here — the concrete call sites in init.ts stay fully typed.
   select: (o) => (clack.select as any)(o),
+  // Same `any` routing as `select` above — `clack.multiselect`'s `Option<Value>` can't
+  // distribute against our generic `Prompter.multiselect<T>` either.
+  multiselect: (o) => (clack.multiselect as any)(o),
   confirm: (o) => clack.confirm(o),
   note: (msg, title) => clack.note(msg, title),
   log: (msg) => clack.log.message(msg),

@@ -11,6 +11,7 @@ import {
   followupLine,
   runFinishedLine,
   interviewMessage,
+  formatApprovers,
   type ActionValue,
 } from "../src/slack/blocks.ts";
 
@@ -78,6 +79,14 @@ test("ticketNotice notes sdlc-auto origin when parentKey given", () => {
   assert.match(msg.text, /ENG-9/);
 });
 
+test("formatApprovers: group only, users only, both, and neither", () => {
+  assert.equal(formatApprovers("S1", undefined), "<!subteam^S1>");
+  assert.equal(formatApprovers(undefined, ["U1", "U2"]), "<@U1>, <@U2>");
+  assert.equal(formatApprovers("S1", ["U1"]), "<!subteam^S1> 또는 <@U1>");
+  assert.equal(formatApprovers(undefined, undefined), "");
+  assert.equal(formatApprovers(undefined, []), "");
+});
+
 test("gateMessage waiting with roleGroupId mentions the subteam", () => {
   const msg = gateMessage({
     key: "ENG-12",
@@ -111,6 +120,36 @@ test("gateMessage waiting without roleGroupId falls back to role name", () => {
     state: "waiting",
   });
   assert.match(msg.text, /Product Owner/);
+});
+
+test("gateMessage waiting with roleUserIds mentions the specific people", () => {
+  const msg = gateMessage({
+    key: "ENG-12",
+    ticketId: "uuid-12",
+    stage: "01-plan",
+    role: "Product Owner",
+    roleUserIds: ["U1", "U2"],
+    summary: "요약",
+    gateUrl: "https://linear.app/x/issue/ENG-12-gate",
+    state: "waiting",
+  });
+  assert.match(msg.text, /<@U1>, <@U2>/);
+  assert.doesNotMatch(msg.text, /subteam/);
+});
+
+test("gateMessage waiting with both roleGroupId and roleUserIds mentions both, joined with 또는", () => {
+  const msg = gateMessage({
+    key: "ENG-12",
+    ticketId: "uuid-12",
+    stage: "01-plan",
+    role: "Product Owner",
+    roleGroupId: "S1",
+    roleUserIds: ["U1"],
+    summary: "요약",
+    gateUrl: "https://linear.app/x/issue/ENG-12-gate",
+    state: "waiting",
+  });
+  assert.match(msg.text, /<!subteam\^S1> 또는 <@U1>/);
 });
 
 test("gateMessage truncates a very long summary to fit the section limit", () => {

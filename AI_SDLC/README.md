@@ -194,7 +194,7 @@ npx ai-sdlc-runner init
 | 4 | Slack 앱 토큰 (`xapp-…`) | 가려진 입력. `apps.connections.open`으로 검증한다 |
 | 5 | Linear API 키 (`lin_api_…`) | 가려진 입력. 조회로 검증한 뒤 팀 목록에서 고른다 |
 | 6 | Slack 채널 | 채널 ID 또는 채널 링크를 붙여넣으면 ID를 뽑아낸다. 확인 메시지를 보내 봇이 그 채널에 있는지 검증하고, `not_in_channel`이면 `/invite` 안내 후 다시 묻는다 |
-| 7 | 승인 역할 (선택) | 역할별로 Slack 사용자 그룹을 고른다. 건너뛰면 채널 멤버 누구나 승인할 수 있다 |
+| 7 | 승인 역할: 역할마다 제한 없음 / Slack 사용자 그룹 / 특정 사람 중 선택 | 건너뛰면 채널 멤버 누구나 승인할 수 있다. Slack 사용자 그룹은 유료 플랜에서만 쓸 수 있고, 특정 사람 지정은 모든 플랜에서 쓸 수 있다 |
 | 8 | 시작 방식 | 버튼(기본) 또는 자동 |
 | 9 | 저장소 템플릿 | `.claude/CLAUDE.md`·`REVIEW.md`·`ops/`가 없으면 설치할지 묻는다(`/sdlc-init`과 같은 파일) |
 | 10 | 저장 · 요약 | `config.json`·`credentials.json`을 저장하고 `doctor` 결과와 `npx ai-sdlc-runner start` 안내를 보여 준다 |
@@ -347,7 +347,7 @@ npm install
 | `linearTeamId` | 티켓을 받을 Linear 팀 ID (Claude Code에서 Linear MCP의 `list_teams`로 조회) |
 | `demoAppUrl` | 04 Test에서 e2e로 열어 볼 내 앱 주소 (예: `http://localhost:3000`) |
 | `gateRoles` | 단계별 승인자 이름. 기본값은 PO / PO / Engineer / Code Owner / Release Manager / Service Owner |
-| `slack.channelId`, `slack.startMode`, `slack.roleGroups` | Slack을 붙일 때만. 3-C ①의 채널·역할과 같은 값 |
+| `slack.channelId`, `slack.startMode`, `slack.roleGroups`, `slack.roleUsers` | Slack을 붙일 때만. 3-C ①의 채널·역할과 같은 값. `roleGroups`는 유료 플랜의 Slack 사용자 그룹, `roleUsers`는 역할 이름 → Slack 사용자 ID 목록으로 모든 플랜에서 쓸 수 있다 |
 
 `repoPath`는 git 저장소여야 한다. 러너가 티켓마다 `sdlc/<키>` 브랜치의 worktree를 만들어 그 안에서 작업하므로, 내 작업 트리는 건드리지 않는다. 토큰은 config 파일이 아니라 환경변수로 export한다:
 

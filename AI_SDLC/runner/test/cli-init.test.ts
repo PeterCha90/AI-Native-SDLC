@@ -18,6 +18,10 @@ function fakeVerifier(overrides: Partial<Verifier> = {}): Verifier {
     slackApp: async () => ({ ok: true }),
     postTest: async () => ({ ok: true }),
     userGroups: async () => [{ id: "S1", handle: "eng", name: "Engineers" }],
+    users: async () => [
+      { id: "U1", name: "alice", realName: "Alice Kim" },
+      { id: "U2", name: "bob", realName: "Bob Lee" },
+    ],
     linear: async () => ({ ok: true, viewer: "Peter", teams: [{ id: "T1", key: "ENG", name: "Engineering" }] }),
     ...overrides,
   };
@@ -38,6 +42,7 @@ function scriptedPrompter(answers: unknown[]): Prompter & { calls: string[] } {
     text: async (o) => next(`text:${o.message}`) as string | symbol,
     password: async (o) => next(`password:${o.message}`) as string | symbol,
     select: async (o) => next(`select:${o.message}`) as any,
+    multiselect: async (o) => next(`multiselect:${o.message}`) as any,
     confirm: async (o) => next(`confirm:${o.message}`) as boolean | symbol,
     note: () => {},
     log: () => {},
@@ -292,10 +297,8 @@ test("runInit — second run offers existing values as defaults and reuses store
   assert.equal(credRaw.linearApiKey, "lin_api_good");
 });
 
-test("runInit — restricting roles with zero Slack user groups skips per-role prompts, notes it, and saves no restriction", async () => {
+test("runInit — restricting roles: people for Product Owner, a group for Engineer, unrestricted for the rest — both saved", async () => {
   const { repoRoot, home } = await tmpDirs();
-  const verifier = fakeVerifier({ userGroups: async () => [] });
-  const notes: Array<{ msg: string; title?: string }> = [];
   const prompter = scriptedPrompter([
     "have",
     "xoxb-good",
@@ -303,20 +306,134 @@ test("runInit — restricting roles with zero Slack user groups skips per-role p
     "lin_api_good",
     "T1",
     "C0ABC123",
-    true, // restrict role groups? yes — but the workspace has zero Slack user groups
+    true, // restrict roles? yes
+    "people", // Product Owner — mode
+    ["U1"], // Product Owner — people picked
+    "group", // Engineer — mode
+    "S1", // Engineer — group picked
+    "none", // Code Owner — mode
+    "none", // Release Manager — mode
+    "none", // Service Owner — mode
     "button",
     false,
   ]);
-  prompter.note = (msg: string, title?: string) => notes.push({ msg, title });
-  const result = await runInit({ prompter, verifier, repoRoot, home, installTemplates: async () => [] });
+  const result = await runInit({ prompter, verifier: fakeVerifier(), repoRoot, home, installTemplates: async () => [] });
   assert.equal(result.saved, true);
-  assert.ok(
-    notes.some((n) => n.msg.includes("Slack 사용자 그룹이 없습니다")),
-    `expected a "no Slack user groups" note, got ${JSON.stringify(notes)}`,
-  );
   const layout = repoLayout(home, repoRoot);
   const configRaw = JSON.parse(await readFile(layout.configPath, "utf8"));
+  assert.deepEqual(configRaw.slack.roleUsers, { "Product Owner": ["U1"] });
+  assert.deepEqual(configRaw.slack.roleGroups, { Engineer: "S1" });
+});
+
+test("runInit — a workspace with zero Slack user groups omits the group choice but still allows picking people", async () => {
+  const { repoRoot, home } = await tmpDirs();
+  const verifier = fakeVerifier({ userGroups: async () => [] });
+  const prompter = scriptedPrompter([
+    "have",
+    "xoxb-good",
+    "xapp-good",
+    "lin_api_good",
+    "T1",
+    "C0ABC123",
+    true, // restrict roles? yes — but the workspace has zero Slack user groups
+    "people", // Product Owner — mode (no "group" option available)
+    ["U1"],
+    "none",
+    "none",
+    "none",
+    "none",
+    "button",
+    false,
+  ]);
+  const selectCalls: any[] = [];
+  const originalSelect = prompter.select.bind(prompter);
+  prompter.select = (async (o: any) => {
+    selectCalls.push(o);
+    return originalSelect(o);
+  }) as any;
+
+  const result = await runInit({ prompter, verifier, repoRoot, home, installTemplates: async () => [] });
+  assert.equal(result.saved, true);
+
+  const poModeCall = selectCalls.find((c) => c.message === "Product Owner 승인 역할을 제한할 방법을 선택해 주세요");
+  assert.ok(poModeCall, "expected a mode-select prompt for Product Owner");
+  assert.ok(
+    !poModeCall.options.some((opt: any) => opt.value === "group"),
+    `expected no "group" option when the workspace has zero user groups, got ${JSON.stringify(poModeCall.options)}`,
+  );
+
+  const layout = repoLayout(home, repoRoot);
+  const configRaw = JSON.parse(await readFile(layout.configPath, "utf8"));
+  assert.deepEqual(configRaw.slack.roleUsers, { "Product Owner": ["U1"] });
   assert.deepEqual(configRaw.slack.roleGroups, {});
+});
+
+test("runInit — re-running preselects each role's existing restriction (people / group)", async () => {
+  const { repoRoot, home } = await tmpDirs();
+  const verifier = fakeVerifier();
+  const firstPrompter = scriptedPrompter([
+    "have",
+    "xoxb-good",
+    "xapp-good",
+    "lin_api_good",
+    "T1",
+    "C0ABC123",
+    true,
+    "people",
+    ["U1"], // Product Owner -> people [U1]
+    "group",
+    "S1", // Engineer -> group S1
+    "none",
+    "none",
+    "none",
+    "button",
+    false,
+  ]);
+  const first = await runInit({ prompter: firstPrompter, verifier, repoRoot, home, installTemplates: async () => [] });
+  assert.equal(first.saved, true);
+
+  const secondPrompter = scriptedPrompter([
+    "have",
+    "",
+    "",
+    "",
+    "T1",
+    "C0ABC123",
+    true,
+    "people",
+    ["U1"], // re-affirm Product Owner
+    "group",
+    "S1", // re-affirm Engineer
+    "none",
+    "none",
+    "none",
+    "button",
+    false,
+  ]);
+  const selectCalls: any[] = [];
+  const multiselectCalls: any[] = [];
+  const originalSelect = secondPrompter.select.bind(secondPrompter);
+  secondPrompter.select = (async (o: any) => {
+    selectCalls.push(o);
+    return originalSelect(o);
+  }) as any;
+  const originalMultiselect = secondPrompter.multiselect.bind(secondPrompter);
+  secondPrompter.multiselect = (async (o: any) => {
+    multiselectCalls.push(o);
+    return originalMultiselect(o);
+  }) as any;
+
+  const second = await runInit({ prompter: secondPrompter, verifier, repoRoot, home, installTemplates: async () => [] });
+  assert.equal(second.saved, true);
+
+  const poModeCall = selectCalls.find((c) => c.message === "Product Owner 승인 역할을 제한할 방법을 선택해 주세요");
+  assert.equal(poModeCall.initialValue, "people");
+  const engModeCall = selectCalls.find((c) => c.message === "Engineer 승인 역할을 제한할 방법을 선택해 주세요");
+  assert.equal(engModeCall.initialValue, "group");
+  const engGroupCall = selectCalls.find((c) => c.message === "Engineer 승인자 그룹");
+  assert.equal(engGroupCall.initialValue, "S1");
+  const poPeopleCall = multiselectCalls.find((c) => c.message === "Product Owner 승인자");
+  assert.deepEqual(poPeopleCall.initialValues, ["U1"]);
 });
 
 test("runInitNonInteractive — env tokens plus flags save without prompting", async () => {

@@ -13,7 +13,7 @@ import { readGateMap, classifyState, STAGES, type StageId } from "../gate.ts";
 import { listActiveRuns } from "../state.ts";
 import { RoleChecker } from "./roles.ts";
 import { readThread, writeThread } from "./threads.ts";
-import { ACTIONS, REJECT_MODAL, ticketNotice, gateMessage, rejectModal, type ActionValue } from "./blocks.ts";
+import { ACTIONS, REJECT_MODAL, ticketNotice, gateMessage, rejectModal, formatApprovers, type ActionValue } from "./blocks.ts";
 import { createSlackNotifier, type SlackClientLike } from "./notifier.ts";
 import { createSlackInterviewChannel, type SlackInterviewChannel, type SlackInterviewClient } from "./interview.ts";
 
@@ -104,7 +104,9 @@ export async function handleGateAction(
     const canAct = await d.roles.canAct(role, a.userId);
     if (!canAct.ok) {
       if (canAct.error) return { ok: false, message: `역할 확인에 실패했습니다: ${canAct.error}` };
-      return { ok: false, message: `이 게이트는 <!subteam^${canAct.groupId}> 만 승인할 수 있습니다.` };
+      const approvers = formatApprovers(canAct.groupId, canAct.userIds);
+      const who = approvers || role;
+      return { ok: false, message: `이 단계는 ${who}님만 승인할 수 있습니다.` };
     }
 
     let gates;
@@ -323,13 +325,20 @@ export async function startSlackApp(
 
   const roles = new RoleChecker({
     roleGroups: slackConfig.roleGroups,
+    roleUsers: slackConfig.roleUsers,
     listMembers: async (groupId: string) => {
       const res = await app.client.usergroups.users.list({ usergroup: groupId });
       return (res.users as string[] | undefined) ?? [];
     },
   });
 
-  const notifier = createSlackNotifier({ client, channel: slackConfig.channelId, stateDir: o.stateDir, roleGroups: slackConfig.roleGroups });
+  const notifier = createSlackNotifier({
+    client,
+    channel: slackConfig.channelId,
+    stateDir: o.stateDir,
+    roleGroups: slackConfig.roleGroups,
+    roleUsers: slackConfig.roleUsers,
+  });
 
   const interview = createSlackInterviewChannel({
     client: interviewClient,

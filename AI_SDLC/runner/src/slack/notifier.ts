@@ -24,6 +24,8 @@ export interface SlackNotifierOptions {
   channel: string;
   stateDir: string;
   roleGroups: Record<string, string>;
+  /** Role name → Slack user IDs allowed to act on that role's gates. Defaults to {}. */
+  roleUsers?: Record<string, string[]>;
 }
 
 function simpleMsg(text: string): { text: string; blocks: unknown[] } {
@@ -47,6 +49,7 @@ export function createSlackNotifier(
     markStarted(key: string, by: string): Promise<void>;
   } {
   const { client, channel, stateDir, roleGroups } = o;
+  const roleUsers = o.roleUsers ?? {};
 
   async function ensureThread(key: string, fallbackText: string): Promise<ThreadRecord> {
     const existing = await readThread(stateDir, key);
@@ -115,7 +118,17 @@ export function createSlackNotifier(
         delete rec.gateResolvedBy[stage];
         await writeThread(stateDir, key, rec);
       }
-      const msg = gateMessage({ key, ticketId: rec.ticketId, stage, role, roleGroupId: roleGroups[role], summary, gateUrl: gate.url, state: "waiting" });
+      const msg = gateMessage({
+        key,
+        ticketId: rec.ticketId,
+        stage,
+        role,
+        roleGroupId: roleGroups[role],
+        roleUserIds: roleUsers[role],
+        summary,
+        gateUrl: gate.url,
+        state: "waiting",
+      });
       const posted = await client.chat.postMessage({
         channel: rec.channel,
         thread_ts: rec.threadTs,

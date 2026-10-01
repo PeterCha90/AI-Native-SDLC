@@ -7,6 +7,12 @@ export interface Prompter {
   text(o: { message: string; initialValue?: string; placeholder?: string }): Promise<string | symbol>;
   password(o: { message: string }): Promise<string | symbol>;
   select<T>(o: { message: string; options: Array<{ value: T; label: string; hint?: string }>; initialValue?: T }): Promise<T | symbol>;
+  multiselect<T>(o: {
+    message: string;
+    options: Array<{ value: T; label: string; hint?: string }>;
+    initialValues?: T[];
+    required?: boolean;
+  }): Promise<T[] | symbol>;
   confirm(o: { message: string; initialValue?: boolean }): Promise<boolean | symbol>;
   note(msg: string, title?: string): void;
   log(msg: string): void;
@@ -176,32 +182,58 @@ export async function runInit(d: InitDeps): Promise<{ saved: boolean; layout: Re
   if (!("ok" in channelOutcome)) return abort(layout);
   const channelId = channelOutcome.value;
 
-  // Step 7 — Approval roles (optional), from Slack user groups.
+  // Step 7 — Approval roles (optional): per role, unrestricted / a Slack user group (paid
+  // plans only) / specific people (works on any plan). A workspace with no user groups simply
+  // omits that option per role — people can still be chosen.
   const roleGroups: Record<string, string> = {};
-  const wantRoleGroups = await prompter.confirm({
-    message: "승인 역할을 Slack 사용자 그룹으로 제한할까요? (건너뛰면 채널의 누구나 승인할 수 있습니다)",
+  const roleUsers: Record<string, string[]> = {};
+  const wantRestrict = await prompter.confirm({
+    message: "승인 역할을 제한할까요? (건너뛰면 채널의 누구나 승인할 수 있습니다)",
     initialValue: false,
   });
-  if (prompter.isCancel(wantRoleGroups)) return abort(layout);
-  if (wantRoleGroups) {
+  if (prompter.isCancel(wantRestrict)) return abort(layout);
+  if (wantRestrict) {
     const groups = await verifier.userGroups(slackBotToken);
-    if (groups.length === 0) {
-      prompter.note(
-        "워크스페이스에 Slack 사용자 그룹이 없습니다. Slack에서 사용자 그룹을 만든 뒤 init을 다시 실행해 주세요. 지금은 제한 없이 진행합니다.",
-        "사용자 그룹 없음",
-      );
-    } else {
-      for (const role of ROLE_NAMES) {
-        const choice = await prompter.select<string>({
+    let members: Array<{ id: string; name: string; realName: string }> | null = null;
+
+    for (const role of ROLE_NAMES) {
+      const existingGroup = existingConfig.slack?.roleGroups?.[role];
+      const existingUsers = existingConfig.slack?.roleUsers?.[role];
+      const defaultMode: "none" | "group" | "people" = existingGroup ? "group" : existingUsers && existingUsers.length > 0 ? "people" : "none";
+
+      const mode = await prompter.select<"none" | "group" | "people">({
+        message: `${role} 승인 역할을 제한할 방법을 선택해 주세요`,
+        options: [
+          { value: "none", label: "제한하지 않습니다 (채널의 누구나)" },
+          ...(groups.length > 0 ? [{ value: "group" as const, label: "Slack 사용자 그룹" }] : []),
+          { value: "people", label: "특정 사람을 지정합니다" },
+        ],
+        initialValue: defaultMode,
+      });
+      if (prompter.isCancel(mode)) return abort(layout);
+
+      if (mode === "group") {
+        const groupChoice = await prompter.select<string>({
           message: `${role} 승인자 그룹`,
-          options: [
-            { value: "", label: "(제한 없음 — 채널의 누구나)" },
-            ...groups.map((g) => ({ value: g.id, label: `@${g.handle} (${g.name})` })),
-          ],
-          initialValue: existingConfig.slack?.roleGroups?.[role] ?? "",
+          options: groups.map((g) => ({ value: g.id, label: `@${g.handle} (${g.name})` })),
+          initialValue: existingGroup ?? groups[0]?.id,
         });
-        if (prompter.isCancel(choice)) return abort(layout);
-        if (choice) roleGroups[role] = choice as string;
+        if (prompter.isCancel(groupChoice)) return abort(layout);
+        roleGroups[role] = groupChoice as string;
+      } else if (mode === "people") {
+        if (members === null) members = await verifier.users(slackBotToken);
+        if (members.length === 0) {
+          prompter.note(`워크스페이스 멤버를 찾지 못했습니다. ${role}은(는) 제한 없이 진행합니다.`, "사용자 없음");
+          continue;
+        }
+        const picked = await prompter.multiselect<string>({
+          message: `${role} 승인자`,
+          options: members.map((m) => ({ value: m.id, label: `${m.realName} (@${m.name})` })),
+          initialValues: existingUsers ?? [],
+          required: true,
+        });
+        if (prompter.isCancel(picked)) return abort(layout);
+        roleUsers[role] = picked as string[];
       }
     }
   }
@@ -244,6 +276,7 @@ export async function runInit(d: InitDeps): Promise<{ saved: boolean; layout: Re
       channelId,
       startMode: startModeChoice as "button" | "auto",
       roleGroups,
+      roleUsers,
     },
   };
   await writeUserConfig(layout.configPath, newConfig);
@@ -319,7 +352,8 @@ export async function runInitNonInteractive(
     repoPath: d.repoRoot,
     linearTeamId: resolvedTeamId as string,
     linearTrigger: "poll",
-    slack: { channelId: channel as string, startMode: "button", roleGroups: {} },
+    // roleUsers stays {} for --yes; edit config.json afterwards to restrict approval roles.
+    slack: { channelId: channel as string, startMode: "button", roleGroups: {}, roleUsers: {} },
   });
 
   await d.installTemplates(d.repoRoot);
