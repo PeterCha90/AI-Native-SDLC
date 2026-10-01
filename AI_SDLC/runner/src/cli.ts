@@ -3,7 +3,8 @@ import { runCli } from "./cli/commands.ts";
 
 try {
   const exitCode = await runCli(process.argv.slice(2));
-  process.exit(exitCode);
+  // null = a long-running command (start) is serving; keep the process alive.
+  if (exitCode !== null) process.exit(exitCode);
 } catch (err) {
   const message = err instanceof Error ? err.message : String(err);
   console.error(`오류가 발생했습니다: ${message}`);

@@ -247,7 +247,7 @@ async function runDoctorCommand(args: ParsedArgs): Promise<number> {
   return checks.some((c) => !c.ok && c.blocking) ? 1 : 0;
 }
 
-async function runStart(args: ParsedArgs): Promise<number> {
+async function runStart(args: ParsedArgs): Promise<number | null> {
   const { repoRoot, home } = resolveRepoAndHome(args);
   if (!repoRoot) {
     console.error("설정을 찾을 수 없습니다. 먼저 `npx ai-sdlc-runner init` 을 실행해 주세요.");
@@ -273,7 +273,9 @@ async function runStart(args: ParsedArgs): Promise<number> {
 
   const config = loadConfig({ env: process.env, repo: repoRoot, home, credentials, fileConfig });
   startServer(config);
-  return 0;
+  // The HTTP server and Slack socket keep the event loop alive; returning a number here would make
+  // the entry point process.exit() and kill the runner right after it started.
+  return null;
 }
 
 async function runConfigCommand(args: ParsedArgs): Promise<number> {
@@ -297,7 +299,11 @@ async function runConfigCommand(args: ParsedArgs): Promise<number> {
   return 0;
 }
 
-export async function runCli(argv: string[]): Promise<number> {
+/**
+ * Exit code for the process, or `null` when the command started a long-running server
+ * (`start`) and the process must stay alive — the entry point must not call process.exit then.
+ */
+export async function runCli(argv: string[]): Promise<number | null> {
   const args = parseArgs(argv);
   switch (args.command) {
     case "help":
