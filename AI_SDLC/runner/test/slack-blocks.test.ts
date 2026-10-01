@@ -218,7 +218,7 @@ test("gateMessage rejected with no reason renders a placeholder instead of a tra
     gateUrl: "u",
     state: "rejected",
   });
-  assert.equal(msg.text, "⛔ 반려: (사유 없음)");
+  assert.equal(msg.text, "⛔ 반려되었습니다: (사유 없음)");
 });
 
 test("gateMessage rejected reason is escaped", () => {

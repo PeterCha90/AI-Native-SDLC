@@ -37,8 +37,33 @@ const clackPrompter: Prompter = {
   isCancel: (v) => clack.isCancel(v),
 };
 
+/**
+ * Like `execFile`, but pipes `input` to the child's stdin and closes it. Node's async `execFile`
+ * (unlike `execFileSync`) has no `input` option, so this spawns directly — the same pattern as
+ * `runEgoBrowserScript` in `../e2e.ts`, duplicated here so `doctor`'s ego-browser readiness check
+ * can go through the injectable, testable `exec` dependency instead of a bare `spawn` call.
+ */
+function execFileWithInput(cmd: string, args: string[], input: string): Promise<{ code: number; stdout: string; stderr: string }> {
+  return new Promise((resolvePromise) => {
+    const child = spawn(cmd, args);
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString("utf8")));
+    child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString("utf8")));
+    child.on("error", (err) => resolvePromise({ code: 127, stdout, stderr: stderr || (err as Error).message }));
+    child.on("close", (code) => resolvePromise({ code: code ?? 1, stdout, stderr }));
+    child.stdin.write(input);
+    child.stdin.end();
+  });
+}
+
 /** Runs a command and normalizes both success and non-zero-exit failure into one shape. */
-async function execFile(cmd: string, args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
+async function execFile(
+  cmd: string,
+  args: string[],
+  opts?: { input?: string },
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  if (opts?.input !== undefined) return execFileWithInput(cmd, args, opts.input);
   try {
     const { stdout, stderr } = await execFileAsync(cmd, args);
     return { code: 0, stdout, stderr };
@@ -105,7 +130,7 @@ function runManifest(args: ParsedArgs): number {
     try {
       spawn(opener, [url], { stdio: "ignore", detached: true }).unref();
     } catch {
-      console.log(`브라우저를 열지 못했다 — 직접 열어라: ${url}`);
+      console.log(`브라우저를 열지 못했습니다 — 다음 주소를 직접 열어 주세요: ${url}`);
     }
   }
   return 0;
@@ -140,7 +165,7 @@ export async function chooseInitTarget(prompter: Prompter, target: string, tople
   if (target === toplevel) return target;
   const relTarget = relative(toplevel, target) || ".";
   const choice = await prompter.select<string>({
-    message: "대상 폴더를 고른다",
+    message: "대상 폴더를 선택해 주세요",
     options: [
       { value: target, label: relTarget, hint: "현재 폴더" },
       { value: toplevel, label: ".", hint: "저장소 최상위" },
@@ -159,7 +184,7 @@ export async function runInitCommand(
   const target = resolveProjectDir(args.repo);
   const toplevel = findRepoRoot(target);
   if (!toplevel) {
-    console.error("git 저장소 안에서 실행한다 — 러너가 티켓마다 worktree를 만든다.");
+    console.error("git 저장소 안에서 실행해 주세요 — 러너가 티켓마다 worktree를 만듭니다.");
     return 1;
   }
   const toplevelReal = resolveRealPath(toplevel);
@@ -176,11 +201,11 @@ export async function runInitCommand(
       team: args.team,
     });
     if (!result.saved) {
-      console.error("초기화 실패:");
+      console.error("초기화에 실패했습니다:");
       for (const e of result.errors) console.error(`  - ${e}`);
       return 1;
     }
-    console.log("초기화 완료. `npx ai-sdlc-runner start` 로 러너를 시작한다.");
+    console.log("초기화가 완료되었습니다. `npx ai-sdlc-runner start` 로 러너를 시작해 주세요.");
     return 0;
   }
 
@@ -188,15 +213,15 @@ export async function runInitCommand(
   const prompter = deps.prompter ?? clackPrompter;
   const repoRoot = await chooseInitTarget(prompter, target, toplevelReal);
   if (repoRoot === null) {
-    clack.cancel("설정을 저장하지 않았다.");
+    clack.cancel("설정을 저장하지 않았습니다.");
     return 1;
   }
   const result = await runInit({ prompter, verifier, repoRoot, home, installTemplates: installTemplatesReal });
   if (!result.saved) {
-    clack.cancel("설정을 저장하지 않았다.");
+    clack.cancel("설정을 저장하지 않았습니다.");
     return 1;
   }
-  clack.outro("초기화 완료. `npx ai-sdlc-runner start` 로 러너를 시작한다.");
+  clack.outro("초기화가 완료되었습니다. `npx ai-sdlc-runner start` 로 러너를 시작해 주세요.");
   return 0;
 }
 
@@ -222,13 +247,13 @@ async function runDoctorCommand(args: ParsedArgs): Promise<number> {
 async function runStart(args: ParsedArgs): Promise<number> {
   const { repoRoot, home } = resolveRepoAndHome(args);
   if (!repoRoot) {
-    console.error("설정을 찾을 수 없다. 먼저 `npx ai-sdlc-runner init` 을 실행한다.");
+    console.error("설정을 찾을 수 없습니다. 먼저 `npx ai-sdlc-runner init` 을 실행해 주세요.");
     return 1;
   }
   const layout = repoLayout(home, repoRoot);
   const fileConfig = await readUserConfig(layout.configPath);
   if (!fileConfig) {
-    console.error("설정을 찾을 수 없다. 먼저 `npx ai-sdlc-runner init` 을 실행한다.");
+    console.error("설정을 찾을 수 없습니다. 먼저 `npx ai-sdlc-runner init` 을 실행해 주세요.");
     return 1;
   }
   const credentials = await readCredentials(layout.credentialsPath, (msg) => console.error(msg));
@@ -238,7 +263,7 @@ async function runStart(args: ParsedArgs): Promise<number> {
     const checks = await runDoctor({ exec: execFile, verifier, repoRoot, config: fileConfig, credentials });
     console.log(formatChecks(checks));
     if (checks.some((c) => !c.ok && c.blocking)) {
-      console.error("점검 실패 — 문제를 고치거나 --skip-checks 로 건너뛴다.");
+      console.error("점검에 실패했습니다 — 문제를 해결하거나 --skip-checks 옵션으로 건너뛰어 주세요.");
       return 1;
     }
   }
@@ -251,13 +276,13 @@ async function runStart(args: ParsedArgs): Promise<number> {
 async function runConfigCommand(args: ParsedArgs): Promise<number> {
   const { repoRoot, home } = resolveRepoAndHome(args);
   if (!repoRoot) {
-    console.log("설정 없음 — `npx ai-sdlc-runner init` 을 실행한다.");
+    console.log("설정 없음 — `npx ai-sdlc-runner init` 을 실행해 주세요.");
     return 0;
   }
   const layout = repoLayout(home, repoRoot);
   const fileConfig = await readUserConfig(layout.configPath);
   if (!fileConfig) {
-    console.log("설정 없음 — `npx ai-sdlc-runner init` 을 실행한다.");
+    console.log("설정 없음 — `npx ai-sdlc-runner init` 을 실행해 주세요.");
     return 0;
   }
   console.log(JSON.stringify(fileConfig, null, 2));

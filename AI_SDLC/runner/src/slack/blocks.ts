@@ -81,7 +81,7 @@ export function ticketNotice(
   let text = `🆕 *<${t.url}|${t.key}>* ${escapeMrkdwn(t.title)}`;
   if (t.creator) text += ` — ${escapeMrkdwn(t.creator)}`;
   if (t.labels.includes("sdlc-auto") && o.parentKey) {
-    text += ` · ↺ ${o.parentKey}에서 생성`;
+    text += ` · ↺ ${o.parentKey}에서 생성되었습니다`;
     if (o.depth && o.depth > 1) text += ` (${o.depth}회차)`;
   }
 
@@ -109,13 +109,13 @@ export function ticketNotice(
       });
       break;
     case "started":
-      blocks.push(context(`▶ 시작함${by}`));
+      blocks.push(context(`▶ 시작했습니다${by}`));
       break;
     case "auto":
-      blocks.push(context("▶ 자동 시작됨"));
+      blocks.push(context("▶ 자동으로 시작되었습니다"));
       break;
     case "ignored":
-      blocks.push(context(`🚫 무시함${by}`));
+      blocks.push(context(`🚫 무시했습니다${by}`));
       break;
   }
 
@@ -127,12 +127,40 @@ function formatDuration(ms: number): string {
   return `${Math.round(ms / 60_000)}분`;
 }
 
+/**
+ * Korean object/subject particle ("을/를", "이/가") for each fixed column label, chosen by how
+ * the label is actually read aloud in Korean (e.g. "Build"/"Test" are read with a trailing vowel
+ * — "빌드"/"테스트" — even though the English spelling ends in a consonant letter). Kept as an
+ * explicit lookup rather than a letter-based heuristic because that mismatch would otherwise
+ * produce ungrammatical particles for exactly those two labels.
+ */
+const STAGE_PARTICLES: Record<string, { obj: string; subj: string }> = {
+  "00 Setup": { obj: "을", subj: "이" },
+  "01 Plan": { obj: "을", subj: "이" },
+  "02 Design": { obj: "을", subj: "이" },
+  "03 Build": { obj: "를", subj: "가" },
+  "04 Test": { obj: "를", subj: "가" },
+  "05 Deploy": { obj: "를", subj: "가" },
+  "06 Maintain": { obj: "을", subj: "이" },
+};
+
+function stageParticles(label: string): { obj: string; subj: string } {
+  return STAGE_PARTICLES[label] ?? { obj: "를", subj: "가" };
+}
+
 export function stageLine(stage: string, status: "running" | "ok" | "failed", durationMs?: number, note?: string): Msg {
   const label = stageLabel(stage);
+  const { obj, subj } = stageParticles(label);
   const icon = status === "running" ? "⏳" : status === "ok" ? "✅" : "❌";
-  const word = status === "running" ? "실행 중" : status === "ok" ? "완료" : "실패";
 
-  let text = `${icon} ${label} ${word}`;
+  let text: string;
+  if (status === "running") {
+    text = `${icon} ${label}${obj} 진행하고 있습니다`;
+  } else if (status === "ok") {
+    text = `${icon} ${label}${subj} 완료되었습니다`;
+  } else {
+    text = `${icon} ${label}${subj} 실패했습니다`;
+  }
   if (status !== "running" && durationMs !== undefined) text += ` (${formatDuration(durationMs)})`;
   if (note) text += ` — ${escapeMrkdwn(note)}`;
 
@@ -159,20 +187,20 @@ export function gateMessage(g: {
   switch (g.state) {
     case "waiting": {
       const mention = g.roleGroupId ? `<!subteam^${g.roleGroupId}>` : escapeMrkdwn(g.role);
-      headerText = `🔔 ${mention} 승인 필요 — ${label}`;
+      headerText = `🔔 ${mention} 승인이 필요합니다 — ${label}`;
       break;
     }
     case "approved":
-      headerText = g.by === "Linear" ? "✅ Linear에서 승인" : g.by ? `✅ <@${g.by}> 승인` : "✅ 승인";
+      headerText = g.by === "Linear" ? "✅ Linear에서 승인했습니다" : g.by ? `✅ <@${g.by}>님이 승인했습니다` : "✅ 승인되었습니다";
       break;
     case "rejected": {
       const reason = g.reason && g.reason.length > 0 ? escapeMrkdwn(g.reason) : "(사유 없음)";
-      headerText = `⛔ 반려: ${reason}`;
+      headerText = `⛔ 반려되었습니다: ${reason}`;
       if (g.rework) headerText += ` → 재작업 ${g.rework.attempt}/${g.rework.maxAttempts}`;
       break;
     }
     case "timeout":
-      headerText = `⏰ 승인 대기 시간 초과 — ${label}`;
+      headerText = `⏰ 승인 대기 시간이 초과되었습니다 — ${label}`;
       break;
   }
 
@@ -229,16 +257,17 @@ export function interviewMessage(i: {
   let headerText: string;
   switch (i.state) {
     case "open": {
-      const mention = i.requesterId ? `<@${i.requesterId}> ` : "";
-      const note = i.requesterId ? "" : " (스레드에서 누구나 답할 수 있다)";
-      headerText = `🙋 ${mention}질문 ${i.questions.length}개 (${i.round}/${i.maxRounds})${note}`;
+      const note = i.requesterId ? "" : " (스레드에서 누구나 답할 수 있습니다)";
+      headerText = i.requesterId
+        ? `🙋 <@${i.requesterId}>님, 질문이 ${i.questions.length}개 있습니다 (${i.round}/${i.maxRounds})`
+        : `🙋 질문이 ${i.questions.length}개 있습니다 (${i.round}/${i.maxRounds})${note}`;
       break;
     }
     case "applied":
-      headerText = i.by ? `✅ 답변 ${i.answerCount}개 반영 (by <@${i.by}>)` : `✅ 답변 ${i.answerCount}개 반영`;
+      headerText = i.by ? `✅ 답변 ${i.answerCount}개를 반영했습니다 (by <@${i.by}>)` : `✅ 답변 ${i.answerCount}개가 반영되었습니다`;
       break;
     case "proceeded":
-      headerText = i.by ? `➡️ 이대로 진행 (by <@${i.by}>)` : "➡️ 이대로 진행";
+      headerText = i.by ? `➡️ 이대로 진행했습니다 (by <@${i.by}>)` : "➡️ 이대로 진행되었습니다";
       break;
   }
 
@@ -249,7 +278,7 @@ export function interviewMessage(i: {
   }
 
   if (i.state === "open") {
-    blocks.push(context(`답변 ${i.answerCount}개 받음`));
+    blocks.push(context(`답변 ${i.answerCount}개를 받았습니다`));
     const value = JSON.stringify({ key: i.key, ticketId: i.ticketId });
     blocks.push({
       type: "actions",
@@ -294,11 +323,11 @@ export function rejectModal(v: ActionValue): unknown {
 }
 
 export function followupLine(f: { key: string; url: string }): Msg {
-  const text = `↺ 후속 티켓 생성: <${f.url}|${f.key}>`;
+  const text = `↺ 후속 티켓이 생성되었습니다: <${f.url}|${f.key}>`;
   return { text, blocks: [section(text)] };
 }
 
 export function runFinishedLine(outcome: "done" | "aborted"): Msg {
-  const text = outcome === "done" ? "🏁 파이프라인 완료" : "🛑 파이프라인 중단됨";
+  const text = outcome === "done" ? "🏁 파이프라인이 완료되었습니다" : "🛑 파이프라인이 중단되었습니다";
   return { text, blocks: [section(text)] };
 }

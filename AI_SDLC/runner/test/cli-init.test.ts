@@ -213,7 +213,7 @@ test("runInit — a Slack URL the parser can't extract a channel id from is reje
   prompter.log = (msg: string) => loggedMessages.push(msg);
   const result = await runInit({ prompter, verifier: fakeVerifier(), repoRoot, home, installTemplates: async () => [] });
   assert.equal(result.saved, true);
-  assert.ok(loggedMessages.some((m) => m.includes("링크에서 채널 ID를 찾지 못했다")));
+  assert.ok(loggedMessages.some((m) => m.includes("링크에서 채널 ID를 찾지 못했습니다")));
   const layout = repoLayout(home, repoRoot);
   const configRaw = JSON.parse(await readFile(layout.configPath, "utf8"));
   assert.equal(configRaw.slack.channelId, "C0ABC123");
@@ -277,11 +277,11 @@ test("runInit — second run offers existing values as defaults and reuses store
   assert.ok(passwordMessages.every((m) => m.includes("기존 값 유지")));
 
   // select()/text() calls were offered the existing values as defaults.
-  const teamCall = selectCalls.find((c) => c.message === "Linear 팀을 선택한다");
+  const teamCall = selectCalls.find((c) => c.message === "Linear 팀을 선택해 주세요");
   assert.equal(teamCall.initialValue, "T1");
   const channelCall = textCalls.find((c) => c.message === "Slack 채널 ID 또는 채널 링크");
   assert.equal(channelCall.initialValue, "C0ABC123");
-  const startModeCall = selectCalls.find((c) => c.message === "새 티켓 알림 시 시작 방식");
+  const startModeCall = selectCalls.find((c) => c.message === "새 티켓 알림 시 시작 방식을 선택해 주세요");
   assert.equal(startModeCall.initialValue, "button");
 
   // Credentials on disk are unchanged (still the original tokens).
@@ -290,6 +290,33 @@ test("runInit — second run offers existing values as defaults and reuses store
   assert.equal(credRaw.slackBotToken, "xoxb-good");
   assert.equal(credRaw.slackAppToken, "xapp-good");
   assert.equal(credRaw.linearApiKey, "lin_api_good");
+});
+
+test("runInit — restricting roles with zero Slack user groups skips per-role prompts, notes it, and saves no restriction", async () => {
+  const { repoRoot, home } = await tmpDirs();
+  const verifier = fakeVerifier({ userGroups: async () => [] });
+  const notes: Array<{ msg: string; title?: string }> = [];
+  const prompter = scriptedPrompter([
+    "have",
+    "xoxb-good",
+    "xapp-good",
+    "lin_api_good",
+    "T1",
+    "C0ABC123",
+    true, // restrict role groups? yes — but the workspace has zero Slack user groups
+    "button",
+    false,
+  ]);
+  prompter.note = (msg: string, title?: string) => notes.push({ msg, title });
+  const result = await runInit({ prompter, verifier, repoRoot, home, installTemplates: async () => [] });
+  assert.equal(result.saved, true);
+  assert.ok(
+    notes.some((n) => n.msg.includes("Slack 사용자 그룹이 없습니다")),
+    `expected a "no Slack user groups" note, got ${JSON.stringify(notes)}`,
+  );
+  const layout = repoLayout(home, repoRoot);
+  const configRaw = JSON.parse(await readFile(layout.configPath, "utf8"));
+  assert.deepEqual(configRaw.slack.roleGroups, {});
 });
 
 test("runInitNonInteractive — env tokens plus flags save without prompting", async () => {

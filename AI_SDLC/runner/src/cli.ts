@@ -6,7 +6,7 @@ try {
   process.exit(exitCode);
 } catch (err) {
   const message = err instanceof Error ? err.message : String(err);
-  console.error(`오류: ${message}`);
+  console.error(`오류가 발생했습니다: ${message}`);
   if (process.env.AI_SDLC_DEBUG === "1" && err instanceof Error && err.stack) {
     console.error(err.stack);
   }

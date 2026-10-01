@@ -96,22 +96,22 @@ export async function handleGateAction(
 ): Promise<GateActionResult> {
   const lockKey = `${a.key}:${a.stage}`;
   if (inFlightGates.has(lockKey)) {
-    return { ok: false, message: "이미 처리 중이다" };
+    return { ok: false, message: "이미 처리 중입니다." };
   }
   inFlightGates.add(lockKey);
   try {
     const role = d.gateRoles[a.stage];
     const canAct = await d.roles.canAct(role, a.userId);
     if (!canAct.ok) {
-      if (canAct.error) return { ok: false, message: `역할 확인에 실패했다: ${canAct.error}` };
-      return { ok: false, message: `이 게이트는 <!subteam^${canAct.groupId}> 만 승인할 수 있다.` };
+      if (canAct.error) return { ok: false, message: `역할 확인에 실패했습니다: ${canAct.error}` };
+      return { ok: false, message: `이 게이트는 <!subteam^${canAct.groupId}> 만 승인할 수 있습니다.` };
     }
 
     let gates;
     try {
       gates = await readGateMap(d.runnerDir, a.key);
     } catch (err) {
-      return { ok: false, message: `게이트 정보를 찾을 수 없다: ${(err as Error).message}` };
+      return { ok: false, message: `게이트 정보를 찾을 수 없습니다: ${(err as Error).message}` };
     }
     const gate = gates[a.stage];
 
@@ -119,11 +119,11 @@ export async function handleGateAction(
     try {
       stateType = await d.source.getStateType(gate.issueId);
     } catch (err) {
-      return { ok: false, message: `상태 조회에 실패했다: ${(err as Error).message}` };
+      return { ok: false, message: `상태 조회에 실패했습니다: ${(err as Error).message}` };
     }
     const verdict = classifyState(stateType);
-    if (verdict === "approved") return { ok: false, message: "이미 승인됨" };
-    if (verdict === "rejected") return { ok: false, message: "이미 반려됨" };
+    if (verdict === "approved") return { ok: false, message: "이미 승인되었습니다." };
+    if (verdict === "rejected") return { ok: false, message: "이미 반려되었습니다." };
 
     // Recorded before the card moves — see the docstring above.
     const rec = await readThread(d.stateDir, a.key);
@@ -134,18 +134,18 @@ export async function handleGateAction(
 
     try {
       if (a.approved) {
-        await d.source.comment(gate.issueId, `Slack에서 <@${a.userId}> 승인`);
+        await d.source.comment(gate.issueId, `Slack에서 <@${a.userId}>님이 승인했습니다`);
         await d.source.setStateType(gate.issueId, "completed");
       } else {
         await d.source.comment(gate.issueId, a.reason ?? "사유 없음");
         await d.source.setStateType(gate.issueId, "canceled");
       }
     } catch (err) {
-      return { ok: false, message: `처리에 실패했다: ${(err as Error).message}` };
+      return { ok: false, message: `처리에 실패했습니다: ${(err as Error).message}` };
     }
 
     if (!d.isRunActive(a.key)) {
-      return { ok: true, note: `러너 재시작으로 이 실행은 중단됐다. /sdlc run ${a.key} 로 다시 시작한다.` };
+      return { ok: true, note: `러너가 재시작되어 이 실행이 중단되었습니다. /sdlc run ${a.key} 로 다시 시작해 주세요.` };
     }
     return { ok: true };
   } finally {
@@ -171,8 +171,8 @@ export function parseSdlcCommand(text: string): SdlcCommand {
  * when this key is already active — `isRunActive` now covers a run from the moment it's queued
  * (not just once it starts executing; see `enqueueTicket` in index.ts), so there's no separate
  * "started" bookkeeping to leak across a run's lifetime. A finished or aborted run is no longer
- * active, so starting it again is allowed — that's the whole point of "이 실행은 중단됐다 —
- * /sdlc run <키>로 다시 시작한다".
+ * active, so starting it again is allowed — that's the whole point of "이 실행이 중단되었습니다 —
+ * /sdlc run <키>로 다시 시작해 주세요".
  * Exported (and kept trivial) so it's cheaply unit-testable without standing up a Bolt app.
  */
 export function shouldBlockDoubleStart(key: string, isRunActive: (key: string) => boolean): boolean {
@@ -235,16 +235,16 @@ export async function handleSdlcCreate(
     if (state === "auto") d.enqueue(ticket);
     return { ok: true };
   } catch (err) {
-    return { ok: false, message: `티켓 생성 실패: ${(err as Error).message}` };
+    return { ok: false, message: `티켓 생성에 실패했습니다: ${(err as Error).message}` };
   }
 }
 
 const HELP_TEXT = [
   "*AI-SDLC 사용법*",
-  "`/sdlc <제목>` — 새 티켓을 만들고 알림을 게시한다",
-  "`/sdlc run <키>` — 기존 티켓으로 파이프라인을 시작한다 (예: `/sdlc run ENG-12`)",
-  "`/sdlc status` — 진행 중인 실행 목록을 본다",
-  "`/sdlc help` — 이 도움말을 본다",
+  "`/sdlc <제목>` — 새 티켓을 만들고 알림을 게시합니다",
+  "`/sdlc run <키>` — 기존 티켓으로 파이프라인을 시작합니다 (예: `/sdlc run ENG-12`)",
+  "`/sdlc status` — 진행 중인 실행 목록을 봅니다",
+  "`/sdlc help` — 이 도움말을 봅니다",
 ].join("\n");
 
 // ── startSlackApp ────────────────────────────────────────────────────────────
@@ -297,7 +297,7 @@ async function updateGateMessage(
     ticketId: rec.ticketId,
     stage: o.stage,
     role: "",
-    summary: "게이트가 처리됐다. 자세한 내용은 Linear 카드의 코멘트를 확인하라.",
+    summary: "게이트가 처리되었습니다. 자세한 내용은 Linear 카드의 코멘트를 확인해 주세요.",
     gateUrl,
     state: o.approved ? "approved" : "rejected",
     by: o.approved ? o.userId : undefined,
@@ -354,7 +354,7 @@ export async function startSlackApp(
     const value: ActionValue = JSON.parse(b.actions[0].value);
     const userId: string = b.user.id;
     if (shouldBlockDoubleStart(value.key, o.isRunActive)) {
-      await actionClient.chat.postEphemeral({ channel: b.channel.id, user: userId, text: "이미 시작됨" });
+      await actionClient.chat.postEphemeral({ channel: b.channel.id, user: userId, text: "이미 시작되었습니다." });
       return;
     }
     try {
@@ -364,7 +364,7 @@ export async function startSlackApp(
       if (position === 0) {
         // Raced: became active between the check above and this enqueue call (e.g. two clicks
         // landed close enough together). `enqueue` itself is the source of truth here.
-        await actionClient.chat.postEphemeral({ channel: b.channel.id, user: userId, text: "이미 시작됨" });
+        await actionClient.chat.postEphemeral({ channel: b.channel.id, user: userId, text: "이미 시작되었습니다." });
         return;
       }
       if (position > 1) {
@@ -373,12 +373,12 @@ export async function startSlackApp(
           await actionClient.chat.postMessage({
             channel: rec.channel,
             thread_ts: rec.threadTs,
-            text: `대기열 ${position}번째 — 앞선 실행이 끝나면 시작한다`,
+            text: `대기열 ${position}번째입니다 — 앞선 실행이 끝나면 시작합니다`,
           });
         }
       }
     } catch (err) {
-      await actionClient.chat.postEphemeral({ channel: b.channel.id, user: userId, text: `시작 실패: ${(err as Error).message}` });
+      await actionClient.chat.postEphemeral({ channel: b.channel.id, user: userId, text: `시작에 실패했습니다: ${(err as Error).message}` });
     }
   });
 
@@ -450,7 +450,7 @@ export async function startSlackApp(
       const userId: string = b.user.id;
       const result = await interview.onButton(value.key, kind, userId);
       if (!result.ok) {
-        await actionClient.chat.postEphemeral({ channel: b.channel.id, user: userId, text: result.message ?? "처리할 수 없다" });
+        await actionClient.chat.postEphemeral({ channel: b.channel.id, user: userId, text: result.message ?? "처리할 수 없습니다." });
       }
     });
   }
@@ -487,13 +487,13 @@ export async function startSlackApp(
           ? active
               .map((r) => `• <${r.meta.url}|${r.meta.key}> ${r.meta.title} — ${r.live.stage} (${r.live.phase}${r.live.role ? `, ${r.live.role} 대기` : ""})`)
               .join("\n")
-          : "진행 중인 실행이 없다.";
+          : "진행 중인 실행이 없습니다.";
         await respond({ response_type: "ephemeral", text });
         return;
       }
       case "run": {
         if (shouldBlockDoubleStart(parsed.key, o.isRunActive)) {
-          await respond({ response_type: "ephemeral", text: "이미 시작됨" });
+          await respond({ response_type: "ephemeral", text: "이미 시작되었습니다." });
           return;
         }
         try {
@@ -501,14 +501,14 @@ export async function startSlackApp(
           await notifier.markStarted(ticket.key, command.user_id);
           const position = o.enqueue(ticket);
           if (position === 0) {
-            await respond({ response_type: "ephemeral", text: "이미 시작됨" });
+            await respond({ response_type: "ephemeral", text: "이미 시작되었습니다." });
             return;
           }
           if (position > 1) {
-            await respond({ response_type: "ephemeral", text: `대기열 ${position}번째 — 앞선 실행이 끝나면 시작한다` });
+            await respond({ response_type: "ephemeral", text: `대기열 ${position}번째입니다 — 앞선 실행이 끝나면 시작합니다` });
           }
         } catch (err) {
-          await respond({ response_type: "ephemeral", text: `시작 실패: ${(err as Error).message}` });
+          await respond({ response_type: "ephemeral", text: `시작에 실패했습니다: ${(err as Error).message}` });
         }
         return;
       }
@@ -558,7 +558,7 @@ export async function startSlackApp(
   // Confirms the bot can actually post before declaring success — a channel the bot hasn't
   // been invited to fails here, not silently on the first real notice.
   try {
-    await client.chat.postMessage({ channel: slackConfig.channelId, text: "🤖 AI-SDLC 봇이 연결됐다." });
+    await client.chat.postMessage({ channel: slackConfig.channelId, text: "🤖 AI-SDLC 봇이 연결되었습니다." });
   } catch (err) {
     const message = (err as { data?: { error?: string } }).data?.error ?? (err as Error).message;
     if (message === "not_in_channel") {

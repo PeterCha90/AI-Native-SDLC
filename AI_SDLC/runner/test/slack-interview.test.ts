@@ -459,7 +459,7 @@ test("onButton: two near-simultaneous presses (apply + proceed) on the same key 
   assert.equal(outcome.kind, "answers");
 
   const lastUpdate = client.updated[client.updated.length - 1];
-  assert.match(lastUpdate.text, /답변 1개 반영/, "the final Slack message must reflect the settled outcome, not a partial/raced one");
+  assert.match(lastUpdate.text, /답변 1개를 반영했습니다/, "the final Slack message must reflect the settled outcome, not a partial/raced one");
 });
 
 // ── missing_scope warning ────────────────────────────────────────────────────

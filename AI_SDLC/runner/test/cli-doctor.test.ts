@@ -26,7 +26,11 @@ function creds(overrides: Partial<DoctorDeps["credentials"]> = {}): DoctorDeps["
 }
 
 function greenExec(overrides: Record<string, { code: number; stdout: string; stderr: string }> = {}) {
-  return async (cmd: string, args: string[]): Promise<{ code: number; stdout: string; stderr: string }> => {
+  return async (
+    cmd: string,
+    args: string[],
+    _opts?: { input?: string },
+  ): Promise<{ code: number; stdout: string; stderr: string }> => {
     const key = `${cmd} ${args.join(" ")}`;
     for (const [k, v] of Object.entries(overrides)) {
       if (key.startsWith(k)) return v;
@@ -40,7 +44,7 @@ function greenExec(overrides: Record<string, { code: number; stdout: string; std
         stderr: "",
       };
     if (cmd === "git") return { code: 0, stdout: "true", stderr: "" };
-    if (cmd === "ego-lite") return { code: 0, stdout: "1.0.0", stderr: "" };
+    if (cmd === "ego-browser") return { code: 0, stdout: "", stderr: "ok" };
     return { code: 1, stdout: "", stderr: "unhandled" };
   };
 }
@@ -72,6 +76,11 @@ test("missing linear entirely in mcp list is a blocking failure", async () => {
   assert.ok(check);
   assert.equal(check!.ok, false);
   assert.equal(check!.blocking, true);
+  // `claude mcp list`만 보고는 다른 폴더의 local/project 범위 서버를 알 수 없다는 점과, 정확한
+  // 추가 명령을 detail/fix에 남긴다.
+  assert.match(check!.detail, /현재 폴더에서 보이는 서버만/);
+  assert.match(check!.fix ?? "", /claude mcp add --scope user --transport http linear https:\/\/mcp\.linear\.app\/mcp/);
+  assert.match(check!.fix ?? "", /\/mcp/);
 });
 
 test("linear connected (✔ Connected) is not blocking", async () => {
@@ -124,13 +133,37 @@ test("a linear line for another server (e.g. 'my-linear-clone') doesn't false-po
   assert.equal(check!.blocking, true);
 });
 
-test("ego-browser missing is a non-blocking warning", async () => {
-  const exec = greenExec({ "ego-lite": { code: 127, stdout: "", stderr: "not found" } });
+test("ego-browser ready (cliLog(\"ok\") echoes back without onboarding) is ✅", async () => {
+  const exec = greenExec({ "ego-browser nodejs": { code: 0, stdout: "", stderr: "ok" } });
+  const checks = await runDoctor({ exec, verifier: fakeVerifier(), repoRoot: null, config: null, credentials: creds() });
+  const check = checks.find((c) => c.name === "ego-browser 준비");
+  assert.ok(check);
+  assert.equal(check!.ok, true);
+  assert.equal(check!.blocking, false);
+});
+
+test("ego-browser still in onboarding is a non-blocking warning with a hint", async () => {
+  const exec = greenExec({
+    "ego-browser nodejs": { code: 0, stdout: "", stderr: "please complete the onboarding process first" },
+  });
   const checks = await runDoctor({ exec, verifier: fakeVerifier(), repoRoot: null, config: null, credentials: creds() });
   const check = checks.find((c) => c.name === "ego-browser 준비");
   assert.ok(check);
   assert.equal(check!.ok, false);
   assert.equal(check!.blocking, false);
+  assert.match(check!.detail, /온보딩/);
+  assert.match(check!.fix ?? "", /온보딩/);
+});
+
+test("ego-browser missing binary is a non-blocking warning with an install hint", async () => {
+  const exec = greenExec({ "ego-browser nodejs": { code: 127, stdout: "", stderr: "command not found" } });
+  const checks = await runDoctor({ exec, verifier: fakeVerifier(), repoRoot: null, config: null, credentials: creds() });
+  const check = checks.find((c) => c.name === "ego-browser 준비");
+  assert.ok(check);
+  assert.equal(check!.ok, false);
+  assert.equal(check!.blocking, false);
+  assert.match(check!.detail, /찾을 수 없습니다/);
+  assert.match(check!.fix ?? "", /설치해 주세요/);
 });
 
 test("invalid slack bot token is blocking only when slack is configured", async () => {
@@ -196,7 +229,7 @@ test("저장소 템플릿 check finds .claude/CLAUDE.md, not a root CLAUDE.md", 
   assert.ok(check);
   assert.equal(check!.ok, true);
   assert.equal(check!.blocking, false);
-  assert.match(check!.detail, /모두 있음/);
+  assert.match(check!.detail, /모두 있습니다/);
 });
 
 test("저장소 템플릿 check is a non-blocking warning when .claude/CLAUDE.md is missing, even if a root CLAUDE.md exists", async () => {

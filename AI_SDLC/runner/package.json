@@ -1,6 +1,6 @@
 {
   "name": "ai-sdlc-runner",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Linear 티켓을 6단계 AI-native SDLC 파이프라인(claude -p)으로 돌리고, 단계별 승인을 Slack 봇으로 받는 러너. npx ai-sdlc-runner init 으로 설정한다.",
   "type": "module",
   "license": "MIT",

@@ -204,13 +204,13 @@ export function createSlackInterviewChannel(o: CreateSlackInterviewChannelOption
 
   async function onButton(key: string, action: "apply" | "proceed", userId: string): Promise<{ ok: boolean; message?: string }> {
     if (inFlightButtons.has(key)) {
-      return { ok: false, message: "이미 처리 중이다" };
+      return { ok: false, message: "이미 처리 중입니다." };
     }
     inFlightButtons.add(key);
     try {
       const a = active.get(key);
       if (!a) {
-        return { ok: false, message: `러너 재시작으로 이 실행은 중단됐다. /sdlc run ${key} 로 다시 시작한다.` };
+        return { ok: false, message: `러너가 재시작되어 이 실행이 중단되었습니다. /sdlc run ${key} 로 다시 시작해 주세요.` };
       }
 
       const state = await readInterviewState(stateDir, key);
