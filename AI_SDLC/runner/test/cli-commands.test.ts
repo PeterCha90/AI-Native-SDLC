@@ -331,7 +331,7 @@ test("`config` run from a deeper subfolder (apps/web/src) finds the apps/web con
   console.log = (msg?: unknown) => {
     logged.push(String(msg));
   };
-  let code: number;
+  let code: number | null;
   try {
     code = await runCli(["config", "--repo", webSrcDir, "--home", home]);
   } finally {
@@ -358,7 +358,7 @@ test("`config` from an uninitialized sibling folder (apps/api) falls back to the
   console.log = (msg?: unknown) => {
     logged.push(String(msg));
   };
-  let code: number;
+  let code: number | null;
   try {
     code = await runCli(["config", "--repo", apiDir, "--home", home]);
   } finally {
@@ -382,7 +382,7 @@ test("`config` at the git toplevel behaves as before (unchanged)", async () => {
   console.log = (msg?: unknown) => {
     logged.push(String(msg));
   };
-  let code: number;
+  let code: number | null;
   try {
     code = await runCli(["config", "--repo", root, "--home", home]);
   } finally {
