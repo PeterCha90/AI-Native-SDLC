@@ -5,15 +5,36 @@ AI-SDLC 파이프라인이 실제로 돌아가는 대상 앱이다. 러너(`../r
 - **개발 루프 (01~05)** — 일부러 심어둔 버그를 e2e가 잡고, 파이프라인이 intent → spec → plan → 코드 수정 + 회귀 테스트 → PR 까지 간다.
 - **운영 루프 (06)** — 운영 중 에러 로그를 모니터가 σ로 판정하고, 3σ면 클로드가 원인을 진단해 Linear 티켓을 연다. 그 티켓이 다시 01을 연다.
 
+## 파이프라인을 직접 돌려보려면 — 복사해서 쓴다
+
+이 폴더는 `PeterCha90/AI-Native-SDLC` 저장소 안의 전시용이다. 05 Deploy는 `gh pr create`로 PR을 여는데,
+이 폴더를 그대로 쓰면 그 PR이 내가 쓸 권한 없는 원본 저장소로 올라간다. 파이프라인을 PR까지 끝까지
+돌려보려면 내 GitHub 저장소로 복사해서 쓴다.
+
+```bash
+git clone https://github.com/PeterCha90/AI-Native-SDLC.git
+cp -r AI-Native-SDLC/AI_SDLC/todo-app ~/my-todo && cd ~/my-todo
+git init && git add . && git commit -m "init: todo-app"
+gh repo create my-todo --private --source=. --push   # 05 Deploy가 여기에 PR을 올린다
+npm install
+npx ai-sdlc-runner init     # .claude/CLAUDE.md·REVIEW.md·ops/ 가 여기서 처음 생긴다
+npx ai-sdlc-runner start
+```
+
+아래 "처음 시작하기"·"처음 받았다면 — 5분 확인"의 명령은 복사한 폴더(`~/my-todo`) 안에서도 그대로
+쓴다 — 전부 상대 경로다. `.claude/`가 저장소에 없는 것도 똑같다: 위 `npx ai-sdlc-runner init`(또는
+`/sdlc-init`)이 거기서 처음 만든다.
+
 ## 처음 시작하기 — SDLC 플러그인 켜기
 
-이 예시 앱은 `.claude/`를 저장소에 커밋해 두지 않는다 — 클론한 사람이 직접 만들어 보게 한 것이다("생성하는
-재미"). 파이프라인이 이 폴더에서 실제로 걸리는 걸 보려면 먼저 아래를 한다.
+이 예시 앱은 `.claude/`를 저장소에 커밋해 두지 않는다 — 클론(또는 위처럼 복사)한 사람이 직접 만들어
+보게 한 것이다("생성하는 재미"). 파이프라인이 이 폴더에서 실제로 걸리는 걸 보려면 먼저 아래를 한다.
 
 1. 플러그인을 설치한다: `claude plugin marketplace add PeterCha90/AI-Native-SDLC && claude plugin install ai-native-sdlc@ai-sdlc`
    (또는 이 폴더 안에서 `--scope project`를 붙이면 `.claude/settings.json`까지 CLI가 바로 써준다)
-2. `cd AI_SDLC/todo-app`에서 Claude Code를 열고 `/sdlc-init`을 실행한다 — 없으면 `.claude/CLAUDE.md`·
-   `REVIEW.md`·`ops/bands.yaml`·`ops/detect.sh`를 만든다(이미 있는 파일은 건드리지 않는다).
+2. 이 폴더(원본이면 `cd AI_SDLC/todo-app`, 복사했으면 `cd ~/my-todo`)에서 Claude Code를 열고
+   `/sdlc-init`을 실행한다 — 없으면 `.claude/CLAUDE.md`·`REVIEW.md`·`ops/bands.yaml`·`ops/detect.sh`를
+   만든다(이미 있는 파일은 건드리지 않는다).
 3. 아래 "처음 받았다면 — 5분 확인"으로 앱 자체를 확인한다.
 
 ## 처음 받았다면 — 5분 확인

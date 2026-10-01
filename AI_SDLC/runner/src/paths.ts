@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -83,4 +83,51 @@ export function findRepoRoot(cwd: string): string | null {
   const result = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf8" });
   if (result.status !== 0 || result.error) return null;
   return result.stdout.trim() || null;
+}
+
+/**
+ * Resolves `p` to an absolute, symlink-resolved real path. Falls back to a plain absolute path
+ * (no symlink resolution) when `p` doesn't exist — callers like `resolveProjectDir` must still
+ * produce a usable path for a `--repo` argument that isn't a real/git directory, so `findRepoRoot`
+ * can refuse it with a clear error instead of this helper throwing first.
+ */
+export function resolveRealPath(p: string): string {
+  const abs = resolve(p);
+  try {
+    return realpathSync(abs);
+  } catch {
+    return abs;
+  }
+}
+
+/**
+ * The CLI's target "project dir" — `--repo <path>` if given (resolved against `cwd`), else `cwd`
+ * itself — as an absolute, symlink-resolved real path. This does NOT check it's inside a git work
+ * tree; callers pair it with `findRepoRoot` for that.
+ */
+export function resolveProjectDir(repoArg: string | undefined, cwd: string = process.cwd()): string {
+  const base = repoArg ? resolve(cwd, repoArg) : resolve(cwd);
+  return resolveRealPath(base);
+}
+
+/**
+ * Every directory from `start` up to and including `stop`, nearest first — e.g.
+ * `walkUpTo("/r/apps/web/src", "/r")` → `["/r/apps/web/src", "/r/apps/web", "/r/apps", "/r"]`. Used by
+ * `resolveRepoAndHome` to find the nearest initialized config walking up toward the git toplevel.
+ * Both arguments are resolved (not realpath'd) before walking — pass already-realpath'd paths in
+ * for symlink-safe comparisons. Stops at the filesystem root instead of looping forever if `stop`
+ * is never reached (e.g. mismatched inputs).
+ */
+export function walkUpTo(start: string, stop: string): string[] {
+  const stopAbs = resolve(stop);
+  const dirs: string[] = [];
+  let current = resolve(start);
+  while (true) {
+    dirs.push(current);
+    if (current === stopAbs) break;
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return dirs;
 }
