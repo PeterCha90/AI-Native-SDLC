@@ -1,6 +1,6 @@
 <p align="center">
   <img src="https://img.shields.io/badge/AI--native-SDLC-blueviolet?style=for-the-badge" alt="AI-native SDLC" />
-  <img src="https://img.shields.io/badge/version-0.4.0-blue?style=for-the-badge" alt="Version" />
+  <a href="https://www.npmjs.com/package/ai-sdlc-runner"><img src="https://img.shields.io/npm/v/ai-sdlc-runner?style=for-the-badge&color=blue" alt="npm version" /></a>
   <img src="https://img.shields.io/badge/Claude_Code-plugin-orange?style=for-the-badge" alt="Claude Code plugin" />
   <img src="https://img.shields.io/badge/node-%3E%3D22-brightgreen?style=for-the-badge" alt="Node >= 22" />
 </p>
@@ -177,8 +177,7 @@ Linear에 티켓이 생기면 러너가 (기본은 30초 폴링, 필요하면 we
 
 ### 설정
 
-클론도 `sdlc.config.json` 편집도 필요 없다. 내 저장소에서 바로 실행한다(npm 배포 전에는 소스에서 실행:
-["개발자용: 소스에서 실행"](#개발자용-소스에서-실행) 참고):
+클론도 `sdlc.config.json` 편집도 필요 없다. 내 저장소에서 바로 실행한다([npm 패키지](https://www.npmjs.com/package/ai-sdlc-runner)):
 
 ```bash
 cd ~/code/my-app
@@ -233,7 +232,6 @@ npx ai-sdlc-runner init
 | `manifest [--open]` | Slack 앱 매니페스트 YAML을 출력한다. `--open`이면 앱 생성 페이지도 연다 |
 | `config` | 현재 설정을 출력한다(토큰은 앞 8자만 보인다) |
 
-(패키지가 아직 npm에 없다면 위 명령 대신 아래 "개발자용: 소스에서 실행" 절을 본다.)
 
 ### 실행
 
@@ -272,7 +270,6 @@ Slack 앱을 아직 안 만들었어도 저장소를 옮겨 다닐 필요 없다
 
 ### ② 실행
 
-(npm 배포 전에는 소스에서 실행: ["개발자용: 소스에서 실행"](#개발자용-소스에서-실행) 참고)
 
 ```bash
 npx ai-sdlc-runner start
@@ -332,7 +329,7 @@ Slack이 꺼져 있거나 webhook 모드면 인터뷰 없이(`noInterview`) 바�
 
 ## 개발자용: 소스에서 실행
 
-러너를 고치거나, `npx ai-sdlc-runner`가 아직 npm에 없을 때는 저장소를 직접 받아 돌린다.
+러너 자체를 고칠 때는 저장소를 직접 받아 돌린다.
 
 ```bash
 git clone https://github.com/PeterCha90/FastCampus.git ~/tools/FastCampus

@@ -1,6 +1,6 @@
 <p align="center">
   <img src="https://img.shields.io/badge/AI--native-SDLC-blueviolet?style=for-the-badge" alt="AI-native SDLC" />
-  <img src="https://img.shields.io/badge/version-0.4.0-blue?style=for-the-badge" alt="Version" />
+  <a href="https://www.npmjs.com/package/ai-sdlc-runner"><img src="https://img.shields.io/npm/v/ai-sdlc-runner?style=for-the-badge&color=blue" alt="npm version" /></a>
   <img src="https://img.shields.io/badge/Claude_Code-plugin-orange?style=for-the-badge" alt="Claude Code plugin" />
   <img src="https://img.shields.io/badge/node-%3E%3D22-brightgreen?style=for-the-badge" alt="Node >= 22" />
 </p>
