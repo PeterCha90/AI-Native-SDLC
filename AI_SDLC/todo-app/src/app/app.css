@@ -1,10 +1,3 @@
-@font-face {
-  font-family: "Noonnu Basic Gothic";
-  src: url("/fonts/NoonnuBasicGothicRegular.ttf") format("truetype");
-  font-weight: 400;
-  font-display: swap;
-}
-
 :root {
   --paper: #f7f3ec;
   --paper-2: #efe9df;
@@ -20,7 +13,7 @@
   --spring: cubic-bezier(0.32, 0.72, 0, 1);
   --serif: "Instrument Serif", "Noto Serif KR", serif;
   --serif-ko: "Noto Serif KR", "Instrument Serif", serif;
-  --display: "Noonnu Basic Gothic", "Pretendard Variable", Pretendard, sans-serif;
+  --display: "Pretendard Variable", Pretendard, -apple-system, "Apple SD Gothic Neo", sans-serif;
   --sans: "Pretendard Variable", Pretendard, -apple-system, "Apple SD Gothic Neo", sans-serif;
   color-scheme: light;
 }

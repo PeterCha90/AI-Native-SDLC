@@ -5,7 +5,7 @@
   "e2eDriver": "ego-lite",
   "demoAppUrl": "http://localhost:5180",
   "useWorktree": true,
-  "linearTeamId": "bb9ddb14-778f-49bd-b8e5-429c737eab00",
+  "linearTeamId": "",
   "autoTicketLabel": "sdlc-auto",
   "maxAutoTicketDepth": 3,
   "gateRoles": {

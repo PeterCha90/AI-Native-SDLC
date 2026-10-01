@@ -179,7 +179,6 @@ npm run monitor    # 터미널 2 — 모니터. 판정 로그를 여기서 본�
 | `server/index.mjs` | TODO API. 요청마다 `logs/access.jsonl`에 기록. `/api/_ops/*`(장애 주입, 콘솔 통계)는 기록하지 않는다 |
 | `src/app/` | Daybook 할 일 앱 (`index.html`) |
 | `src/ops/` | Daybook Ops 관측 콘솔 (`ops.html`, 개발 서버에서는 `/ops`) |
-| `public/fonts/` | 타이틀 폰트 눈누 기초고딕 |
 | `ops/monitor.mjs` | 주기 판정, 3σ 에서 클로드 호출, 중복 방지, 회복 처리 |
 | `ops/claude-triage.mjs` | `claude -p` 호출. 프롬프트, 도구 제한(`--tools`, `dontAsk`, `Edit(docs/intent/**)`), 결과 스키마 |
 | `ops/metrics.mjs` | 로그 읽기와 비율 계산. 서버 패널과 모니터가 같이 쓴다 |
