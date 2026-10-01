@@ -77,11 +77,11 @@
 셸에서 두 줄이면 된다. 클론은 필요 없다.
 
 ```bash
-claude plugin marketplace add PeterCha90/FastCampus
+claude plugin marketplace add PeterCha90/AI-Native-SDLC
 claude plugin install ai-native-sdlc@ai-sdlc
 ```
 
-첫 줄은 이 GitHub 저장소를 `ai-sdlc`라는 이름의 마켓플레이스로 등록하고, 둘째 줄은 그 안의 `ai-native-sdlc` 플러그인을 설치한다. Claude Code 세션 안에서라면 같은 일을 `/plugin marketplace add PeterCha90/FastCampus`, `/plugin install ai-native-sdlc@ai-sdlc`로 할 수 있다. 설치한 뒤에는 Claude Code를 다시 시작해야 플러그인이 로드된다.
+첫 줄은 이 GitHub 저장소를 `ai-sdlc`라는 이름의 마켓플레이스로 등록하고, 둘째 줄은 그 안의 `ai-native-sdlc` 플러그인을 설치한다. Claude Code 세션 안에서라면 같은 일을 `/plugin marketplace add PeterCha90/AI-Native-SDLC`, `/plugin install ai-native-sdlc@ai-sdlc`로 할 수 있다. 설치한 뒤에는 Claude Code를 다시 시작해야 플러그인이 로드된다.
 
 기본 설치 범위는 **나(user)**라서 내 모든 프로젝트에서 켜진다. 범위를 바꾸려면 `--scope`를 붙인다:
 
@@ -332,8 +332,8 @@ Slack이 꺼져 있거나 webhook 모드면 인터뷰 없이(`noInterview`) 바�
 러너 자체를 고칠 때는 저장소를 직접 받아 돌린다.
 
 ```bash
-git clone https://github.com/PeterCha90/FastCampus.git ~/tools/FastCampus
-cd ~/tools/FastCampus/AI_SDLC/runner
+git clone https://github.com/PeterCha90/AI-Native-SDLC.git ~/tools/AI-Native-SDLC
+cd ~/tools/AI-Native-SDLC/AI_SDLC/runner
 npm install
 ```
 

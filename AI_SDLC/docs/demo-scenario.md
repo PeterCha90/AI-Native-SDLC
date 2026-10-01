@@ -42,7 +42,7 @@
   붙는지는 첫 자동 티켓에서 한 번 눈으로 확인한다(라벨이 빠지면 깊이 제한이 작동하지 않는다).
 
   확인: `node --experimental-strip-types src/index.ts` 를 띄운 뒤 `curl -s localhost:3939/health` 가 `{"status":"ok"}` 를 돌려주면 정상.
-- `runner/sdlc.config.json`의 `repoPath`가 `../todo-app`, `demoAppUrl`이 `http://localhost:5180`인지 확인한다 — 파이프라인은 FastCampus 모노레포 루트가 아니라 `AI_SDLC/todo-app`을 직접 대상으로 한다. `useWorktree: true`이면 03 build가 `.worktrees/<key>/AI_SDLC/todo-app`(git 최상위 기준 상대 경로를 워크트리 안에서 그대로 재현한 경로)에서 실행된다는 것도 미리 알아둔다.
+- `runner/sdlc.config.json`의 `repoPath`가 `../todo-app`, `demoAppUrl`이 `http://localhost:5180`인지 확인한다 — 파이프라인은 AI-Native-SDLC 모노레포 루트가 아니라 `AI_SDLC/todo-app`을 직접 대상으로 한다. `useWorktree: true`이면 03 build가 `.worktrees/<key>/AI_SDLC/todo-app`(git 최상위 기준 상대 경로를 워크트리 안에서 그대로 재현한 경로)에서 실행된다는 것도 미리 알아둔다.
 - **`SDLC_AUTO_APPROVE=1`은 리허설 전용 스위치다.** 이 값을 주면 00 setup과 여섯 게이트를 전부 건너뛴다. 라이브 시연에서는 게이트가 핵심 메시지이므로 **켜지 않는다** — 사전 리허설 녹화나 게이트 이후 구간(04 test 버그, 06 maintain)만 빠르게 확인하고 싶을 때만 켠다.
 
 ### 되돌려놓을 상태

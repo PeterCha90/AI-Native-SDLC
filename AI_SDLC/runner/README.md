@@ -63,11 +63,11 @@ AI-SDLC는 이 여섯 단계를 하나의 닫힌 루프로 잇는다. 에이전�
 
 | 구성 | 역할 | 위치 |
 | --- | --- | --- |
-| Claude Code 플러그인 `ai-native-sdlc` | 단계별 스킬 7개, 되돌리기 어려운 행동을 막는 hook 8개, 검증 서브에이전트, `/sdlc-init`·`/sdlc-run` 명령 | [`AI_SDLC/plugin`](https://github.com/PeterCha90/FastCampus/tree/main/AI_SDLC/plugin) |
-| **러너 `ai-sdlc-runner` (이 패키지)** | 티켓을 받아 단계마다 `claude -p`를 실행하고, Linear 게이트와 Slack 봇으로 승인을 받는다 | [`AI_SDLC/runner`](https://github.com/PeterCha90/FastCampus/tree/main/AI_SDLC/runner) |
-| 예시 앱 `todo-app` | 운영 중 에러가 나면 티켓이 저절로 생기는 TODO 앱 — 06 → 01 루프를 눈으로 보여 준다 | [`AI_SDLC/todo-app`](https://github.com/PeterCha90/FastCampus/tree/main/AI_SDLC/todo-app) |
+| Claude Code 플러그인 `ai-native-sdlc` | 단계별 스킬 7개, 되돌리기 어려운 행동을 막는 hook 8개, 검증 서브에이전트, `/sdlc-init`·`/sdlc-run` 명령 | [`AI_SDLC/plugin`](https://github.com/PeterCha90/AI-Native-SDLC/tree/main/AI_SDLC/plugin) |
+| **러너 `ai-sdlc-runner` (이 패키지)** | 티켓을 받아 단계마다 `claude -p`를 실행하고, Linear 게이트와 Slack 봇으로 승인을 받는다 | [`AI_SDLC/runner`](https://github.com/PeterCha90/AI-Native-SDLC/tree/main/AI_SDLC/runner) |
+| 예시 앱 `todo-app` | 운영 중 에러가 나면 티켓이 저절로 생기는 TODO 앱 — 06 → 01 루프를 눈으로 보여 준다 | [`AI_SDLC/todo-app`](https://github.com/PeterCha90/AI-Native-SDLC/tree/main/AI_SDLC/todo-app) |
 
-플러그인만으로도 Claude Code에서 `/sdlc-run ENG-12`처럼 대화형으로 쓸 수 있다. 러너는 이걸 **팀 단위로 자동화**한다 — 티켓이 생기면 알아서 시작하고, 승인은 역할별로 Slack 버튼에서 받는다. 전체 소개는 [AI_SDLC README](https://github.com/PeterCha90/FastCampus/blob/main/AI_SDLC/README.md)에 있다.
+플러그인만으로도 Claude Code에서 `/sdlc-run ENG-12`처럼 대화형으로 쓸 수 있다. 러너는 이걸 **팀 단위로 자동화**한다 — 티켓이 생기면 알아서 시작하고, 승인은 역할별로 Slack 버튼에서 받는다. 전체 소개는 [AI_SDLC README](https://github.com/PeterCha90/AI-Native-SDLC/blob/main/AI_SDLC/README.md)에 있다.
 
 ---
 
@@ -270,5 +270,5 @@ MIT
 ---
 
 <p align="center">
-  Made by <a href="https://github.com/PeterCha90">Peter Cha</a> · <a href="https://github.com/PeterCha90/FastCampus">FastCampus/AI_SDLC</a>
+  Made by <a href="https://github.com/PeterCha90">Peter Cha</a> · <a href="https://github.com/PeterCha90/AI-Native-SDLC">AI-Native-SDLC</a>
 </p>
