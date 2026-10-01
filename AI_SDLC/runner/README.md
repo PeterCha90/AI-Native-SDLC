@@ -1,6 +1,6 @@
 <p align="center">
   <img src="https://img.shields.io/badge/AI--native-SDLC-blueviolet?style=for-the-badge" alt="AI-native SDLC" />
-  <img src="https://img.shields.io/badge/version-0.4.0-blue?style=for-the-badge" alt="Version" />
+  <a href="https://www.npmjs.com/package/ai-sdlc-runner"><img src="https://img.shields.io/npm/v/ai-sdlc-runner?style=for-the-badge&color=blue" alt="npm version" /></a>
   <img src="https://img.shields.io/badge/node-%3E%3D22-brightgreen?style=for-the-badge" alt="Node >= 22" />
   <img src="https://img.shields.io/badge/license-MIT-lightgrey?style=for-the-badge" alt="License MIT" />
 </p>
@@ -110,7 +110,6 @@ npx ai-sdlc-runner init
 npx ai-sdlc-runner start
 ```
 
-> npm 배포 전에는 소스에서 실행한다: `git clone https://github.com/PeterCha90/FastCampus.git && cd FastCampus/AI_SDLC/runner && npm install`, 이후 `npx ai-sdlc-runner` 대신 `node --experimental-strip-types src/cli.ts`.
 
 `init`은 아래 순서로 묻는다. 토큰은 가려진 입력으로 받고 **그 자리에서 실제 API로 검증**한다. 틀리면 그 단계만 다시 묻고(최대 3번), 중간에 Ctrl+C로 나가면 아무것도 저장하지 않는다.
 
@@ -229,13 +228,15 @@ npm test                  # node:test, Slack·Linear 실제 호출 없음
 npx tsc --noEmit
 ```
 
-배포 전:
+새 버전 배포:
 
 ```bash
 npm run build             # tsc → dist/
 npm run smoke:pack        # npm pack → 임시 설치 → --help·manifest·config 확인
 npm publish
 ```
+
+npm은 새 버전을 바로 공개하지 않고 대기(staged) 상태로 받는다. npmjs.com에서 메인테이너가 2단계 인증으로 승인해야 공개되고, 그 전까지 `npm view ai-sdlc-runner version`은 이전 버전을 보여 준다. 2단계 인증이 보안 키(Touch ID·패스키) 방식이면 `npm publish --auth-type=web`으로 브라우저에서 승인한다. 배포할 때는 `package.json`과 `../plugin/.claude-plugin/plugin.json`의 버전을 함께 올린다.
 
 `prepack`이 빌드하고 `../plugin`을 패키지 안 `plugin/`으로 복사한다. Node는 `node_modules` 안의 TypeScript를 실행하지 않으므로 배포본은 `dist/`의 JavaScript다.
 
