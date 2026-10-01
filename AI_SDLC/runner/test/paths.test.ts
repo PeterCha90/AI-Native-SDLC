@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { realpathSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import { join, basename } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -13,6 +14,9 @@ import {
   repoKey,
   repoLayout,
   findRepoRoot,
+  resolveRealPath,
+  resolveProjectDir,
+  walkUpTo,
 } from "../src/paths.ts";
 
 test("packageRoot() resolves the runner package root (contains package.json)", () => {
@@ -86,4 +90,30 @@ test("findRepoRoot() returns the git toplevel for a real repo", async () => {
 test("findRepoRoot() returns null outside a git repo", async () => {
   const dir = await mkdtemp(join(tmpdir(), "sdlc-paths-nogit-"));
   assert.equal(findRepoRoot(dir), null);
+});
+
+test("resolveRealPath() resolves symlinks and falls back to a plain absolute path when the target doesn't exist", async () => {
+  const base = await mkdtemp(join(tmpdir(), "sdlc-paths-realpath-"));
+  assert.equal(resolveRealPath(base), realpathSync(base));
+  assert.equal(resolveRealPath(join(base, "does-not-exist")), join(base, "does-not-exist"));
+});
+
+test("resolveProjectDir() resolves --repo against cwd, else returns cwd itself, both as real paths", async () => {
+  const base = await mkdtemp(join(tmpdir(), "sdlc-paths-projectdir-"));
+  await mkdir(join(base, "apps", "web"), { recursive: true });
+
+  assert.equal(resolveProjectDir(undefined, base), realpathSync(base));
+  assert.equal(resolveProjectDir("apps/web", base), realpathSync(join(base, "apps", "web")));
+  assert.equal(resolveProjectDir(join(base, "apps", "web")), realpathSync(join(base, "apps", "web")));
+});
+
+test("walkUpTo() lists every directory from start up to and including stop, nearest first", () => {
+  assert.deepEqual(walkUpTo("/r/apps/web/src", "/r"), ["/r/apps/web/src", "/r/apps/web", "/r/apps", "/r"]);
+  assert.deepEqual(walkUpTo("/r", "/r"), ["/r"]);
+});
+
+test("walkUpTo() stops at the filesystem root instead of looping forever if stop is never reached", () => {
+  const dirs = walkUpTo("/a/b/c", "/not/an/ancestor");
+  assert.equal(dirs[0], "/a/b/c");
+  assert.equal(dirs[dirs.length - 1], "/");
 });

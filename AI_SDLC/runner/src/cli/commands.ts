@@ -1,13 +1,22 @@
 import { readFileSync, existsSync, mkdirSync, chmodSync, copyFileSync } from "node:fs";
 import { execFile as execFileCb, spawn } from "node:child_process";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import * as clack from "@clack/prompts";
 import { parseArgs, type ParsedArgs } from "./args.ts";
-import { createVerifier } from "./verify.ts";
+import { createVerifier, type Verifier } from "./verify.ts";
 import { runInit, runInitNonInteractive, type Prompter } from "./init.ts";
 import { runDoctor, formatChecks, type DoctorDeps } from "./doctor.ts";
-import { bundledPluginDir, manifestPath, defaultHome, repoLayout, findRepoRoot } from "../paths.ts";
+import {
+  bundledPluginDir,
+  manifestPath,
+  defaultHome,
+  repoLayout,
+  findRepoRoot,
+  resolveProjectDir,
+  resolveRealPath,
+  walkUpTo,
+} from "../paths.ts";
 import { readCredentials, readUserConfig, maskToken, type Credentials } from "../user-config.ts";
 import { loadConfig } from "../config.ts";
 import { startServer } from "../index.ts";
@@ -102,26 +111,63 @@ function runManifest(args: ParsedArgs): number {
   return 0;
 }
 
+/**
+ * Starting from the resolved target folder, walks UP to (and including) the git toplevel and
+ * picks the first folder that already has a saved config — so `start`/`doctor`/`config` work from
+ * any subfolder of an initialized project, not just the exact folder `init` was run from. Falls
+ * back to the target itself (not the toplevel) when nothing is found, so the existing "설정을 찾을
+ * 수 없다 … init" guidance still fires for an uninitialized folder.
+ */
 function resolveRepoAndHome(args: ParsedArgs): { repoRoot: string | null; home: string } {
   const home = args.home ?? defaultHome();
-  const cwd = args.repo ? resolve(args.repo) : process.cwd();
-  const repoRoot = findRepoRoot(cwd);
-  return { repoRoot, home };
+  const target = resolveProjectDir(args.repo);
+  const toplevel = findRepoRoot(target);
+  if (!toplevel) return { repoRoot: null, home };
+  const toplevelReal = resolveRealPath(toplevel);
+  for (const dir of walkUpTo(target, toplevelReal)) {
+    if (existsSync(repoLayout(home, dir).configPath)) return { repoRoot: dir, home };
+  }
+  return { repoRoot: target, home };
 }
 
-async function runInitCommand(args: ParsedArgs): Promise<number> {
+/**
+ * Interactive-init-only: when the target folder isn't the git toplevel, asks which one `repoPath`
+ * should be — the current (sub)folder, labeled with its path relative to the toplevel, or the
+ * repository top (`.`). Returns `null` on cancel. Skips the prompt entirely (returns `target`)
+ * when the target already IS the toplevel — nothing to choose between.
+ */
+export async function chooseInitTarget(prompter: Prompter, target: string, toplevel: string): Promise<string | null> {
+  if (target === toplevel) return target;
+  const relTarget = relative(toplevel, target) || ".";
+  const choice = await prompter.select<string>({
+    message: "대상 폴더를 고른다",
+    options: [
+      { value: target, label: relTarget, hint: "현재 폴더" },
+      { value: toplevel, label: ".", hint: "저장소 최상위" },
+    ],
+    initialValue: target,
+  });
+  if (prompter.isCancel(choice)) return null;
+  return choice as string;
+}
+
+export async function runInitCommand(
+  args: ParsedArgs,
+  deps: { prompter?: Prompter; verifier?: Verifier } = {},
+): Promise<number> {
   const home = args.home ?? defaultHome();
-  const cwd = args.repo ? resolve(args.repo) : process.cwd();
-  const repoRoot = findRepoRoot(cwd);
-  if (!repoRoot) {
+  const target = resolveProjectDir(args.repo);
+  const toplevel = findRepoRoot(target);
+  if (!toplevel) {
     console.error("git 저장소 안에서 실행한다 — 러너가 티켓마다 worktree를 만든다.");
     return 1;
   }
-  const verifier = createVerifier();
+  const toplevelReal = resolveRealPath(toplevel);
+  const verifier = deps.verifier ?? createVerifier();
 
   if (args.yes) {
     const result = await runInitNonInteractive({
-      repoRoot,
+      repoRoot: target,
       home,
       verifier,
       installTemplates: installTemplatesReal,
@@ -139,7 +185,13 @@ async function runInitCommand(args: ParsedArgs): Promise<number> {
   }
 
   clack.intro("ai-sdlc-runner init");
-  const result = await runInit({ prompter: clackPrompter, verifier, repoRoot, home, installTemplates: installTemplatesReal });
+  const prompter = deps.prompter ?? clackPrompter;
+  const repoRoot = await chooseInitTarget(prompter, target, toplevelReal);
+  if (repoRoot === null) {
+    clack.cancel("설정을 저장하지 않았다.");
+    return 1;
+  }
+  const result = await runInit({ prompter, verifier, repoRoot, home, installTemplates: installTemplatesReal });
   if (!result.saved) {
     clack.cancel("설정을 저장하지 않았다.");
     return 1;
