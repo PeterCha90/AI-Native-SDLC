@@ -54,6 +54,8 @@ export interface FileConfig {
     channelId: string;
     startMode?: "button" | "auto";
     roleGroups?: Record<string, string>;
+    /** Role name → Slack user IDs allowed to act on that role's gates, independent of any user group. */
+    roleUsers?: Record<string, string[]>;
   };
 }
 
@@ -102,6 +104,7 @@ export interface Config {
     channelId: string;
     startMode: "button" | "auto";
     roleGroups: Record<string, string>;
+    roleUsers: Record<string, string[]>;
   };
 }
 
@@ -208,6 +211,7 @@ export function loadConfig(opts?: LoadConfigOptions | NodeJS.ProcessEnv): Config
           channelId: file.slack.channelId,
           startMode: file.slack.startMode ?? "button",
           roleGroups: file.slack.roleGroups ?? {},
+          roleUsers: file.slack.roleUsers ?? {},
         }
       : null;
 

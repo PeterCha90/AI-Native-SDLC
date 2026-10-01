@@ -113,6 +113,49 @@ test("handleGateAction: no permission -> ok:false, setStateType never called", a
   assert.equal(source.calls.filter((c) => c.startsWith("setStateType")).length, 0);
 });
 
+test("handleGateAction: role restricted to specific people denies a non-listed user with a mention of who can act", async () => {
+  const runnerDir = await tmpRunnerDir();
+  await writeGateMap(runnerDir, "ENG-1");
+  const source = fakeSource("started");
+  const roles = new RoleChecker({
+    roleGroups: {},
+    roleUsers: { "Product Owner": ["U1", "U2"] },
+    listMembers: async () => {
+      throw new Error("should not be called — no group mapped");
+    },
+  });
+
+  const result = await handleGateAction(
+    { userId: "U3", key: "ENG-1", stage: "01-plan", approved: true },
+    deps(runnerDir, source, { roles }),
+  );
+
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.match(result.message, /<@U1>, <@U2>/);
+  assert.equal(source.calls.filter((c) => c.startsWith("setStateType")).length, 0);
+});
+
+test("handleGateAction: a listed person can act even though the mapped group's lookup fails", async () => {
+  const runnerDir = await tmpRunnerDir();
+  await writeGateMap(runnerDir, "ENG-1", "gate-uuid");
+  const source = fakeSource("started");
+  const roles = new RoleChecker({
+    roleGroups: { "Product Owner": "S1" },
+    roleUsers: { "Product Owner": ["U1"] },
+    listMembers: async () => {
+      throw new Error("slack down");
+    },
+  });
+
+  const result = await handleGateAction(
+    { userId: "U1", key: "ENG-1", stage: "01-plan", approved: true },
+    deps(runnerDir, source, { roles }),
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(source.calls.filter((c) => c.startsWith("setStateType")).length, 1);
+});
+
 test("handleGateAction: pending gate, approve -> comments then setStateType(gate-uuid, completed)", async () => {
   const runnerDir = await tmpRunnerDir();
   await writeGateMap(runnerDir, "ENG-1", "gate-uuid");

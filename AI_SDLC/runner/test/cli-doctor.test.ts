@@ -16,6 +16,7 @@ function fakeVerifier(overrides: Partial<Verifier> = {}): Verifier {
     slackApp: async () => ({ ok: true }),
     postTest: async () => ({ ok: true }),
     userGroups: async () => [],
+    users: async () => [],
     linear: async () => ({ ok: true, viewer: "v", teams: [] }),
     ...overrides,
   };

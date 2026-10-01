@@ -70,7 +70,23 @@ test("Slack bot+app tokens with a configured channelId: slack is populated and l
     channelId: "C0123456789",
     startMode: "button",
     roleGroups: { "Product Owner": "S1" },
+    roleUsers: {},
   });
+});
+
+test("Slack roleUsers in file config is carried through to Config.slack.roleUsers", async () => {
+  const configPath = await writeFileConfig({
+    linearTeamId: "team-1",
+    slack: { channelId: "C0123456789", roleUsers: { "Product Owner": ["U1", "U2"] } },
+  });
+  const env = baseEnv({
+    SDLC_CONFIG_PATH: configPath,
+    LINEAR_WEBHOOK_SECRET: "",
+    SLACK_BOT_TOKEN: "xoxb-1",
+    SLACK_APP_TOKEN: "xapp-1",
+  });
+  const config = loadConfig(env);
+  assert.deepEqual(config.slack?.roleUsers, { "Product Owner": ["U1", "U2"] });
 });
 
 test("only one of SLACK_BOT_TOKEN/SLACK_APP_TOKEN set: slack stays null", async () => {

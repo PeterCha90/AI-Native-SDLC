@@ -34,6 +34,7 @@ function scriptedPrompter(answers: unknown[]): Prompter {
     text: async () => next() as string | symbol,
     password: async () => next() as string | symbol,
     select: async () => next() as any,
+    multiselect: async () => next() as any,
     confirm: async () => next() as boolean | symbol,
     note: () => {},
     log: () => {},
@@ -47,6 +48,7 @@ function fakeVerifier(): Verifier {
     slackApp: async () => ({ ok: true }),
     postTest: async () => ({ ok: true }),
     userGroups: async () => [],
+    users: async () => [],
     linear: async () => ({ ok: true, viewer: "Peter", teams: [{ id: "T1", key: "ENG", name: "Engineering" }] }),
   };
 }

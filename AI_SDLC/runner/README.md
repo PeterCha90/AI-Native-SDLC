@@ -121,7 +121,7 @@ npx ai-sdlc-runner start
 | 4 | Slack 앱 토큰 `xapp-…` | `apps.connections.open` |
 | 5 | Linear API 키 `lin_api_…` | 계정 조회 후 팀 목록에서 선택 |
 | 6 | Slack 채널 (ID 또는 링크) | 확인 메시지를 실제로 보낸다. 봇이 없으면 `/invite` 안내 |
-| 7 | 승인 역할 그룹 (선택) | 역할별로 Slack 사용자 그룹 선택. 건너뛰면 채널 누구나 승인 |
+| 7 | 승인 역할 (선택) | 역할마다 제한 없음 / Slack 사용자 그룹 / 특정 사람 중 선택. 건너뛰면 채널 누구나 승인. Slack 사용자 그룹은 유료 플랜에서만 가능하며, 특정 사람 지정은 모든 플랜에서 쓸 수 있다 |
 | 8 | 시작 방식 | 버튼(기본) / 자동 |
 | 9 | 템플릿 설치 | `.claude/CLAUDE.md`·`REVIEW.md`·`ops/`가 없으면 설치 (있으면 건너뜀) |
 
@@ -191,7 +191,8 @@ npx ai-sdlc-runner start
 | 키 | 기본값 | 설명 |
 | --- | --- | --- |
 | `slack.startMode` | `button` | `auto`면 알림과 동시에 시작 |
-| `slack.roleGroups` | `{}` | 역할 이름 → Slack 사용자 그룹 ID (`S…`) |
+| `slack.roleGroups` | `{}` | 역할 이름 → Slack 사용자 그룹 ID (`S…`). 유료 플랜에서만 쓸 수 있다 |
+| `slack.roleUsers` | `{}` | 역할 이름 → Slack 사용자 ID 목록 (`U…`). 모든 플랜에서 쓸 수 있다 |
 | `gateRoles` | PO / PO / Engineer / Code Owner / Release Manager / Service Owner | 단계별 승인자 이름 |
 | `linearPollIntervalMs` | `30000` | 새 티켓 확인 간격 |
 | `gateTimeoutMs` | `1800000` | 승인 대기 상한 (30분, 넘으면 중단) |

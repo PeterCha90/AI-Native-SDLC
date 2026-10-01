@@ -67,6 +67,7 @@ export interface Verifier {
   slackApp(token: string): Promise<{ ok: true } | { ok: false; error: string }>;
   postTest(botToken: string, channel: string): Promise<{ ok: true } | { ok: false; error: string }>;
   userGroups(botToken: string): Promise<Array<{ id: string; handle: string; name: string }>>;
+  users(botToken: string): Promise<Array<{ id: string; name: string; realName: string }>>;
   linear(
     apiKey: string,
   ): Promise<{ ok: true; viewer: string; teams: Array<{ id: string; key: string; name: string }> } | { ok: false; error: string }>;
@@ -166,6 +167,39 @@ export function createVerifier(fetchImpl: typeof fetch = fetch, log: (message: s
         handle: String(g.handle),
         name: String(g.name),
       }));
+    },
+
+    async users(botToken) {
+      const out: Array<{ id: string; name: string; realName: string }> = [];
+      let cursor: string | undefined;
+      do {
+        const body: Record<string, unknown> = { limit: 200 };
+        if (cursor) body.cursor = cursor;
+        const result = await slackApi("users.list", botToken, body);
+        if (!result.ok) {
+          log(`Slack 사용자 목록 조회에 실패했습니다: ${translateVerifyError(result.error)}`);
+          return [];
+        }
+        const data = result.data;
+        if (!data.ok || !Array.isArray(data.members)) {
+          if (!data.ok) log(`Slack 사용자 목록 조회에 실패했습니다: ${String(data.error ?? "unknown_error")}`);
+          return [];
+        }
+        for (const m of data.members as Array<Record<string, unknown>>) {
+          const id = String(m.id ?? "");
+          if (!id || id === "USLACKBOT" || m.deleted || m.is_bot) continue;
+          const profile = (m.profile as Record<string, unknown> | undefined) ?? {};
+          out.push({
+            id,
+            name: String(m.name ?? ""),
+            realName: String(profile.real_name ?? m.real_name ?? m.name ?? ""),
+          });
+        }
+        const meta = data.response_metadata as Record<string, unknown> | undefined;
+        const nextCursor = meta?.next_cursor;
+        cursor = typeof nextCursor === "string" && nextCursor !== "" ? nextCursor : undefined;
+      } while (cursor);
+      return out;
     },
 
     async linear(apiKey) {
